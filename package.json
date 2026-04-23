@@ -1,0 +1,22 @@
+{
+  "name": "codex-imagegen",
+  "version": "0.1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Proxy API server for AI image generation using Codex/ChatGPT OAuth credentials",
+  "main": "src/index.mjs",
+  "scripts": {
+    "start": "node src/index.mjs",
+    "dev": "node --watch src/index.mjs"
+  },
+  "dependencies": {
+    "express": "^4.21.0"
+  },
+  "keywords": [
+    "codex",
+    "image-generation",
+    "proxy",
+    "oauth"
+  ],
+  "license": "MIT"
+}
