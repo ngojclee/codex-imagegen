@@ -1,6 +1,6 @@
 # Codex ImageGen — Task Tracker
 
-## Phase 1: Core Setup
+## Phase 1: Core Setup ✅
 - [x] Create project structure
 - [x] package.json with express dependency
 - [x] .gitignore, .env.example
@@ -11,16 +11,27 @@
 - [x] Entry point (src/index.mjs)
 - [x] README.md
 - [x] npm install
+
+## Phase 2: Verification ✅
 - [x] Test server startup — ✅ OK
 - [x] Test /health endpoint — ✅ returns auth status correctly
-- [x] Test API key middleware — ✅ rejects unauthorized requests
+- [x] Test API key middleware — ✅ rejects unauthorized requests (401)
+- [x] Test POST /v1/images/generations — ✅ sends request to Codex API
+- [x] Test SSE streaming parser — ✅ correctly parses all event types
+- [x] Test error capture — ✅ surfaces actual OpenAI errors to client
+- [x] Cross-verify with codex-imagen original — ✅ same behavior
 
-## Phase 2: Git Setup
-- [x] git init + initial commit
-- [ ] GitHub remote setup
-
-## Phase 3: Full Integration Test
-- [ ] Login Codex CLI in chatgpt mode
-- [ ] Test actual image generation via proxy
+## Phase 3: Integration Test
+- [ ] Test successful image generation (blocked: OpenAI server_error)
+  - Both this proxy and the original codex-imagen get `server_error`
+  - Auth + request format verified correct
+  - Likely OpenAI account/service issue, not code issue
 - [ ] Test reference image support
 - [ ] Test 401 retry with token refresh
+- [ ] Save generated image to output dir
+
+## Phase 4: Git & Release
+- [x] git init + initial commit
+- [x] Debug + error capture improvements committed
+- [ ] GitHub remote setup
+- [ ] Push to GitHub

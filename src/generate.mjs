@@ -122,8 +122,9 @@ async function parseStreamingResponse(response, onProgress) {
   const decoder = new TextDecoder();
   let buffer = "";
   const imageCalls = new Map();
+  const allEventTypes = [];
 
-  const processPayload = (payload) => {
+  const processPayload = (payload, eventType) => {
     const calls = collectImageCalls(payload);
 
     // Handle partial_image events (separate event type)
@@ -139,6 +140,8 @@ async function parseStreamingResponse(response, onProgress) {
         partial: true,
       });
     }
+
+
 
     for (const call of calls) {
       const key = call.id ?? `call-${imageCalls.size + 1}`;
@@ -181,9 +184,27 @@ async function parseStreamingResponse(response, onProgress) {
 
       // Report progress
       const eventType = payload?.type ?? "unknown";
+      allEventTypes.push(eventType);
       if (onProgress) onProgress(eventType);
 
-      processPayload(payload);
+      // Capture error events from the stream
+      if (eventType === "error" || eventType === "response.failed") {
+        const errMsg =
+          payload?.error?.message ??
+          payload?.response?.error?.message ??
+          payload?.status_details?.error?.message ??
+          payload?.message ??
+          JSON.stringify(payload).slice(0, 500);
+        console.error(`[generate] Stream error: ${errMsg}`);
+        // Store error but continue processing — there may be partial results
+        imageCalls.set("__error__", {
+          type: "error",
+          errorMessage: errMsg,
+          errorPayload: payload,
+        });
+      }
+
+      processPayload(payload, eventType);
     }
   }
 
@@ -195,14 +216,23 @@ async function parseStreamingResponse(response, onProgress) {
     const sse = parseSseEvent(buffer.trim());
     if (sse.data && sse.data !== "[DONE]") {
       try {
-        processPayload(JSON.parse(sse.data));
+        const payload = JSON.parse(sse.data);
+        const eventType = payload?.type ?? "unknown";
+        allEventTypes.push(eventType);
+        processPayload(payload, eventType);
       } catch {
         // Ignore unparseable tail
       }
     }
   }
 
-  return [...imageCalls.values()].filter((c) => c.result);
+  // Check for captured error
+  const errorEntry = imageCalls.get("__error__");
+  const imageResults = [...imageCalls.values()].filter(
+    (c) => c.result && c.type !== "error",
+  );
+
+  return { images: imageResults, error: errorEntry || null };
 }
 
 // ─── Main Generation ──────────────────────────────────────────────────────────
@@ -273,7 +303,7 @@ export async function generateImages(config, auth, params) {
 
     // Parse streaming response
     const progressEvents = new Set();
-    const imageCalls = await parseStreamingResponse(response, (eventType) => {
+    const streamResult = await parseStreamingResponse(response, (eventType) => {
       if (!progressEvents.has(eventType)) {
         progressEvents.add(eventType);
         if (eventType === "response.created") {
@@ -293,7 +323,15 @@ export async function generateImages(config, auth, params) {
       }
     });
 
+    const { images: imageCalls, error: streamError } = streamResult;
+
     if (imageCalls.length === 0) {
+      // Surface the actual API error if present
+      if (streamError) {
+        throw new Error(
+          `Image generation failed: ${streamError.errorMessage}`,
+        );
+      }
       throw new Error(
         "No images were generated. The model may not have produced an image for this prompt.",
       );
