@@ -23,7 +23,7 @@ function buildHeaders(auth, requestId, sessionId) {
   };
 }
 
-function buildRequestBody(prompt, model, requestId, inputRefs = []) {
+function buildRequestBody(prompt, model, requestId, inputRefs = [], genOpts = {}) {
   const content = [];
 
   // Attach reference images
@@ -43,6 +43,14 @@ function buildRequestBody(prompt, model, requestId, inputRefs = []) {
   // Attach prompt text
   content.push({ type: "input_text", text: prompt });
 
+  const imageTool = {
+    type: "image_generation",
+    output_format: "png",
+    ...(genOpts.size       && { size: genOpts.size }),
+    ...(genOpts.quality    && { quality: genOpts.quality }),
+    ...(genOpts.background && { background: genOpts.background }),
+  };
+
   return {
     model,
     instructions: "",
@@ -53,12 +61,7 @@ function buildRequestBody(prompt, model, requestId, inputRefs = []) {
         content,
       },
     ],
-    tools: [
-      {
-        type: "image_generation",
-        output_format: "png",
-      },
-    ],
+    tools: [imageTool],
     tool_choice: "auto",
     parallel_tool_calls: false,
     prompt_cache_key: requestId,
@@ -267,13 +270,16 @@ export async function generateImages(config, auth, params) {
     model = config.defaultModel,
     inputRefs = [],
     timeoutMs = config.defaultTimeout,
+    size,
+    quality,
+    background,
   } = params;
 
   const requestId = randomUUID();
   const sessionId = randomUUID();
   const endpoint = `${config.baseUrl.replace(/\/+$/, "")}/responses`;
 
-  const body = buildRequestBody(prompt, model, requestId, inputRefs);
+  const body = buildRequestBody(prompt, model, requestId, inputRefs, { size, quality, background });
   const headers = buildHeaders(auth, requestId, sessionId);
 
   console.log(`[generate] POST ${endpoint}`);
@@ -349,6 +355,20 @@ export async function generateImages(config, auth, params) {
   } catch (error) {
     if (controller.signal.aborted) {
       throw new Error(`Request timed out after ${timeoutMs}ms`);
+    }
+    // Surface the underlying cause (undici network errors, SSE stream drops, etc.)
+    // so the caller can classify them as transient rather than dead-account.
+    const cause = error?.cause;
+    if (cause) {
+      const code = cause.code || cause.name || "unknown";
+      const detail = cause.message || String(cause);
+      console.error(
+        `[generate] Request failed: ${error.message} | cause=${code}: ${detail.slice(0, 300)}`,
+      );
+      const enriched = new Error(`${error.message} (${code}: ${detail.slice(0, 200)})`);
+      enriched.cause = cause;
+      enriched.isTransientNetwork = true;
+      throw enriched;
     }
     throw error;
   } finally {

@@ -1,27 +1,143 @@
 /**
  * Express HTTP server for Codex ImageGen proxy.
- * Provides REST API endpoints for image generation using Codex OAuth.
+ * Exposes OpenAI-compatible image endpoints backed by a pool of Codex OAuth accounts.
  */
 import express from "express";
+import multer from "multer";
 import {
   readAuth,
-  getValidAuth,
   refreshAuth,
   isTokenExpired,
-  tokenSecondsLeft,
 } from "./auth.mjs";
 import { generateImages, CodexApiError } from "./generate.mjs";
+import { NoHealthyAccountsError } from "./pool.mjs";
+
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB per file (per OpenAI-compat spec)
+const MAX_FILES = 5; // up to 3 image[] + 1 mask + buffer
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: MAX_FILE_SIZE,
+    files: MAX_FILES,
+  },
+});
+
+/**
+ * Wrap multer middleware so any upload error is converted to our
+ * standard JSON error shape instead of Express' default HTML.
+ */
+function handleUpload(req, res, next) {
+  upload.any()(req, res, (err) => {
+    if (!err) return next();
+    const message =
+      err instanceof multer.MulterError
+        ? `Upload error: ${err.message}${err.field ? ` (field: ${err.field})` : ""}`
+        : err.message || "Upload failed";
+    res.status(400).json({
+      error: { message, type: "invalid_request_error" },
+    });
+  });
+}
+
+/**
+ * Log OpenAI-compat fields the proxy accepts-and-ignores.
+ * size/quality/background are now forwarded; only n is ignored.
+ */
+function logIgnoredFields(endpoint, body) {
+  if (body?.n !== undefined && body?.n !== "") {
+    console.log(`[server] ${endpoint} accepted-and-ignored: { n: ${body.n} }`);
+  }
+}
+
+/**
+ * Iterate through the account pool until one produces an image.
+ *
+ * Per-account error handling:
+ *   - Token near expiry → refresh before the request.
+ *   - HTTP 401 on the API itself → try one refresh, else mark dead.
+ *   - HTTP 429 / 403 → cooldown, try the next account.
+ *   - Refresh failure (refresh_token revoked) → mark dead, try the next.
+ *   - Other errors → surface immediately (no retry).
+ */
+async function generateWithPool(pool, config, params) {
+  const tried = new Set();
+  let lastError = null;
+  const maxTries = Math.max(1, pool.stats().total);
+
+  for (let attempt = 0; attempt < maxTries; attempt++) {
+    const account = pool.getNext(tried);
+    if (!account) break;
+    tried.add(account.id);
+
+    let auth;
+    try {
+      auth = await readAuth(account.filePath);
+    } catch (err) {
+      pool.markCooldown(account.id, 10_000, `read_auth_failed: ${err.message.slice(0, 120)}`);
+      lastError = err;
+      continue;
+    }
+
+    if (isTokenExpired(auth)) {
+      try {
+        auth = await refreshAuth(auth, config);
+      } catch (err) {
+        console.log(`[server] Refresh failed for ${account.id}: ${err.message.slice(0, 160)}`);
+        pool.markDead(account.id, `refresh_failed: ${err.message.slice(0, 200)}`);
+        lastError = err;
+        continue;
+      }
+    }
+
+    try {
+      console.log(`[server] Using account ${account.id}${account.email ? ` (${account.email})` : ""}`);
+      return await generateImages(config, auth, params);
+    } catch (err) {
+      if (err instanceof CodexApiError) {
+        if (err.status === 401) {
+          try {
+            auth = await refreshAuth(auth, config);
+            return await generateImages(config, auth, params);
+          } catch (refreshErr) {
+            pool.markDead(
+              account.id,
+              `refresh_after_401_failed: ${refreshErr.message.slice(0, 200)}`,
+            );
+            lastError = err;
+            continue;
+          }
+        }
+        if (err.status === 429 || err.status === 403) {
+          pool.markCooldown(account.id, config.cooldownDefaultMs, `http_${err.status}`);
+          lastError = err;
+          continue;
+        }
+      }
+      // Transient network / stream-terminated errors from undici —
+      // upstream dropped connection mid-stream. Short cooldown, try next account.
+      if (err?.isTransientNetwork) {
+        pool.markCooldown(account.id, 10_000, `transient_network: ${err.cause?.code || "terminated"}`);
+        lastError = err;
+        continue;
+      }
+      // Unrecoverable (generation error, upstream 5xx, safety filter) — surface immediately.
+      throw err;
+    }
+  }
+
+  if (lastError) throw lastError;
+  throw new NoHealthyAccountsError(pool.stats());
+}
 
 /**
  * Create and configure the Express application.
  */
-export function createServer(config) {
+export function createServer(config, pool) {
   const app = express();
 
-  // ── Body parser (large limit for base64 image references) ──
   app.use(express.json({ limit: "50mb" }));
 
-  // ── Request logging ──
   app.use((req, res, next) => {
     const start = Date.now();
     res.on("finish", () => {
@@ -33,10 +149,8 @@ export function createServer(config) {
     next();
   });
 
-  // ── API Key Authentication Middleware ──
   const authenticate = (req, res, next) => {
     const authHeader = req.headers.authorization;
-
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
       return res.status(401).json({
         error: {
@@ -45,159 +159,234 @@ export function createServer(config) {
         },
       });
     }
-
     const token = authHeader.slice(7).trim();
     if (token !== config.apiKey) {
       return res.status(403).json({
-        error: {
-          message: "Invalid API key",
-          type: "auth_error",
-        },
+        error: { message: "Invalid API key", type: "auth_error" },
       });
     }
-
     next();
   };
 
-  // ─── Routes ─────────────────────────────────────────────────────────────────
+  const sendError = (res, error, startTime) => {
+    const status =
+      error instanceof NoHealthyAccountsError
+        ? 503
+        : error instanceof CodexApiError
+          ? error.status
+          : 500;
+    const type =
+      error instanceof NoHealthyAccountsError
+        ? "pool_unavailable"
+        : "server_error";
+    res.status(status).json({
+      error: { message: error.message, type },
+      usage: { elapsed_ms: Date.now() - startTime },
+    });
+  };
+
+  // ─── Routes ────────────────────────────────────────────────────────────────
 
   /**
-   * GET /health — Server and auth status (no auth required)
+   * GET /health — No auth required. Reports pool stats.
    */
-  app.get("/health", async (_req, res) => {
-    try {
-      const auth = await readAuth(config.authPath);
-      const expired = isTokenExpired(auth);
-      const ttl = tokenSecondsLeft(auth);
+  app.get("/health", (_req, res) => {
+    const stats = pool.stats();
+    let status;
+    if (stats.total === 0) status = "no_accounts";
+    else if (stats.healthy === 0) status = "degraded";
+    else status = "ok";
 
-      res.json({
-        status: expired ? "degraded" : "ok",
-        auth: {
-          found: true,
-          format: auth.format,
-          path: config.authPath,
-          expired,
-          expires_in_seconds: ttl,
-        },
-        server: {
-          port: config.port,
-          default_model: config.defaultModel,
-          version: "0.1.0.0",
-        },
-      });
-    } catch (error) {
-      res.json({
-        status: "error",
-        auth: {
-          found: false,
-          error: error.message,
-        },
-        server: {
-          port: config.port,
-          default_model: config.defaultModel,
-          version: "0.1.0.0",
-        },
-      });
-    }
+    res.json({
+      status,
+      pool: stats,
+      server: {
+        port: config.port,
+        default_model: config.defaultModel,
+        version: "0.3.0.0",
+      },
+    });
   });
 
-  // Alias
   app.get("/v1/health", (_req, res) => res.redirect("/health"));
 
   /**
-   * POST /v1/images/generations — Generate images
-   *
-   * Request body:
-   *   {
-   *     "prompt": "a cinematic fantasy city at sunrise",
-   *     "model": "gpt-5.4",           // optional
-   *     "input_refs": ["data:..."],    // optional reference images
-   *     "timeout_ms": 900000           // optional
-   *   }
-   *
-   * Response:
-   *   {
-   *     "created": 1234567890,
-   *     "request_id": "...",
-   *     "data": [
-   *       { "b64_json": "...", "revised_prompt": "..." }
-   *     ],
-   *     "usage": { "elapsed_ms": 1234 }
-   *   }
+   * POST /v1/images/generations — text-to-image (JSON body).
    */
   app.post("/v1/images/generations", authenticate, async (req, res) => {
     const startTime = Date.now();
-
     try {
-      const { prompt, model, input_refs, timeout_ms } = req.body;
+      const { prompt, model, input_refs, timeout_ms, size, quality, background } = req.body;
 
-      // Validate prompt
       if (!prompt || typeof prompt !== "string" || !prompt.trim()) {
         return res.status(400).json({
-          error: {
-            message: 'Missing or empty "prompt" field',
-            type: "invalid_request_error",
-          },
+          error: { message: 'Missing or empty "prompt" field', type: "invalid_request_error" },
         });
       }
 
-      // Get valid auth (auto-refresh if expired)
-      let auth = await getValidAuth(config);
+      logIgnoredFields("/v1/images/generations", req.body);
 
-      // Attempt generation with 401 retry
-      let result;
-      try {
-        result = await generateImages(config, auth, {
-          prompt: prompt.trim(),
-          model: model || config.defaultModel,
-          inputRefs: input_refs || [],
-          timeoutMs: timeout_ms || config.defaultTimeout,
-        });
-      } catch (error) {
-        // On 401, force refresh and retry once
-        if (error instanceof CodexApiError && error.status === 401) {
-          console.log("[server] Got 401 — refreshing token and retrying...");
-          auth = await refreshAuth(auth, config);
-          result = await generateImages(config, auth, {
-            prompt: prompt.trim(),
-            model: model || config.defaultModel,
-            inputRefs: input_refs || [],
-            timeoutMs: timeout_ms || config.defaultTimeout,
-          });
-        } else {
-          throw error;
-        }
-      }
+      const result = await generateWithPool(pool, config, {
+        prompt: prompt.trim(),
+        model: model || config.defaultModel,
+        inputRefs: Array.isArray(input_refs) ? input_refs : [],
+        timeoutMs: Number(timeout_ms) > 0 ? Number(timeout_ms) : config.defaultTimeout,
+        size: size || undefined,
+        quality: quality || undefined,
+        background: background || undefined,
+      });
 
       res.json({
         created: Math.floor(Date.now() / 1000),
         request_id: result.requestId,
         data: result.images,
-        usage: {
-          elapsed_ms: Date.now() - startTime,
-        },
+        usage: { elapsed_ms: Date.now() - startTime },
       });
     } catch (error) {
-      console.error("[server] Generation error:", error.message);
+      console.error("[server] /v1/images/generations error:", error.message);
+      sendError(res, error, startTime);
+    }
+  });
 
-      const status = error instanceof CodexApiError ? error.status : 500;
-      res.status(status).json({
-        error: {
-          message: error.message,
-          type: "server_error",
-        },
-        usage: {
-          elapsed_ms: Date.now() - startTime,
-        },
+  /**
+   * POST /v1/images/edits — image-to-image (multipart).
+   *
+   * Parts:
+   *   - image[]   file, 1–3 repeats, ≤ 10 MB each                (required)
+   *   - prompt    text                                           (required)
+   *   - model     text — falls back to config.defaultModel
+   *   - mask      file — logged but currently unused
+   *   - size / quality / background / n — accepted-and-ignored
+   */
+  app.post("/v1/images/edits", authenticate, handleUpload, async (req, res) => {
+    const startTime = Date.now();
+    try {
+      const prompt =
+        typeof req.body?.prompt === "string" ? req.body.prompt.trim() : "";
+      if (!prompt) {
+        return res.status(400).json({
+          error: { message: 'Missing or empty "prompt" field', type: "invalid_request_error" },
+        });
+      }
+
+      const files = Array.isArray(req.files) ? req.files : [];
+      const imageFiles = files.filter(
+        (f) => f.fieldname === "image[]" || f.fieldname === "image",
+      );
+      const maskFile = files.find((f) => f.fieldname === "mask");
+
+      if (imageFiles.length === 0) {
+        return res.status(400).json({
+          error: {
+            message:
+              'Missing "image[]" file(s). At least one image is required for /v1/images/edits.',
+            type: "invalid_request_error",
+          },
+        });
+      }
+
+      logIgnoredFields("/v1/images/edits", req.body);
+      if (maskFile) {
+        console.log(
+          `[server] /v1/images/edits received mask (${maskFile.size} bytes) — ignored`,
+        );
+      }
+
+      const inputRefs = imageFiles.map((f) => {
+        const mime = f.mimetype || "image/png";
+        const b64 = f.buffer.toString("base64");
+        return `data:${mime};base64,${b64}`;
+      });
+
+      console.log(
+        `[server] /v1/images/edits: ${imageFiles.length} image(s), prompt ${prompt.length} chars`,
+      );
+
+      const model =
+        typeof req.body?.model === "string" && req.body.model.trim()
+          ? req.body.model.trim()
+          : config.defaultModel;
+      const timeoutMsRaw = Number(req.body?.timeout_ms);
+      const timeoutMs =
+        Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0
+          ? timeoutMsRaw
+          : config.defaultTimeout;
+      const size = typeof req.body?.size === "string" && req.body.size.trim()
+        ? req.body.size.trim() : undefined;
+      const quality = typeof req.body?.quality === "string" && req.body.quality.trim()
+        ? req.body.quality.trim() : undefined;
+      const background = typeof req.body?.background === "string" && req.body.background.trim()
+        ? req.body.background.trim() : undefined;
+
+      const result = await generateWithPool(pool, config, {
+        prompt,
+        model,
+        inputRefs,
+        timeoutMs,
+        size,
+        quality,
+        background,
+      });
+
+      res.json({
+        created: Math.floor(Date.now() / 1000),
+        request_id: result.requestId,
+        data: result.images,
+        usage: { elapsed_ms: Date.now() - startTime },
+      });
+    } catch (error) {
+      console.error("[server] /v1/images/edits error:", error.message);
+      sendError(res, error, startTime);
+    }
+  });
+
+  // ─── Admin endpoints (same API key as generation) ─────────────────────────
+
+  /** GET /admin/accounts — list pool contents with per-account status. */
+  app.get("/admin/accounts", authenticate, (_req, res) => {
+    res.json({ stats: pool.stats(), accounts: pool.list() });
+  });
+
+  /** POST /admin/harvest — manually re-scan the Codex CLI auth file. */
+  app.post("/admin/harvest", authenticate, async (_req, res) => {
+    try {
+      const result = await pool.harvestFromCodex();
+      res.json({ ok: true, result, stats: pool.stats() });
+    } catch (err) {
+      res.status(500).json({
+        error: { message: err.message, type: "server_error" },
       });
     }
+  });
+
+  /** POST /admin/accounts/:id/revive — reset a dead/cooldown account to healthy. */
+  app.post("/admin/accounts/:id/revive", authenticate, (req, res) => {
+    const ok = pool.revive(req.params.id);
+    if (!ok) {
+      return res.status(404).json({
+        error: { message: `Account not found: ${req.params.id}`, type: "not_found" },
+      });
+    }
+    res.json({ ok: true, account: pool.list().find((a) => a.id === req.params.id) });
+  });
+
+  /** DELETE /admin/accounts/:id — remove an account from the pool. */
+  app.delete("/admin/accounts/:id", authenticate, async (req, res) => {
+    const ok = await pool.remove(req.params.id);
+    if (!ok) {
+      return res.status(404).json({
+        error: { message: `Account not found: ${req.params.id}`, type: "not_found" },
+      });
+    }
+    res.json({ ok: true, stats: pool.stats() });
   });
 
   // ── 404 fallback ──
   app.use((_req, res) => {
     res.status(404).json({
       error: {
-        message: "Not found. Available endpoints: POST /v1/images/generations, GET /health",
+        message:
+          "Not found. Endpoints: POST /v1/images/generations, POST /v1/images/edits, GET /health, GET /admin/accounts, POST /admin/harvest, POST /admin/accounts/:id/revive, DELETE /admin/accounts/:id",
         type: "not_found",
       },
     });

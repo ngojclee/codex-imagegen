@@ -72,6 +72,15 @@ export function loadConfig() {
   const defaultTimeout = parseInt(get("DEFAULT_TIMEOUT_MS", "900000"), 10);
   const outputDir = get("OUTPUT_DIR", path.join(PROJECT_ROOT, "output"));
 
+  // Multi-auth pool — stores per-account auth files harvested from Codex CLI
+  const poolRoot = get(
+    "POOL_ROOT",
+    path.join(os.homedir(), ".codex-imagegen"),
+  );
+  const accountsDir = get("ACCOUNTS_DIR", path.join(poolRoot, "accounts"));
+  const eventsLogPath = get("EVENTS_LOG", path.join(poolRoot, "events.log"));
+  const cooldownDefaultMs = parseInt(get("COOLDOWN_DEFAULT_MS", "60000"), 10);
+
   // Auto-generate API key on first run
   let apiKey = get("PROXY_API_KEY", "");
   let keyGenerated = false;
@@ -111,6 +120,10 @@ export function loadConfig() {
     defaultModel,
     defaultTimeout,
     outputDir,
+    poolRoot,
+    accountsDir,
+    eventsLogPath,
+    cooldownDefaultMs,
     projectRoot: PROJECT_ROOT,
   };
 }

@@ -1,23 +1,40 @@
 /**
  * Codex ImageGen — Proxy API Server
- * Entry point: loads config, creates server, starts listening.
+ * Entry point: loads config, initializes the auth pool, starts Express.
  */
 import { loadConfig } from "./config.mjs";
 import { createServer } from "./server.mjs";
+import { AuthPool } from "./pool.mjs";
 
 const config = loadConfig();
-const app = createServer(config);
 
-app.listen(config.port, () => {
+const pool = new AuthPool(config);
+await pool.init();
+
+const app = createServer(config, pool);
+
+const server = app.listen(config.port, () => {
+  const stats = pool.stats();
+
   console.log("");
   console.log("  ┌─────────────────────────────────────────┐");
-  console.log("  │        Codex ImageGen Proxy v0.1.0.0     │");
+  console.log("  │        Codex ImageGen Proxy v0.3.0.0     │");
   console.log("  └─────────────────────────────────────────┘");
   console.log("");
-  console.log(`  Server:    http://localhost:${config.port}`);
-  console.log(`  Auth:      ${config.authPath}`);
-  console.log(`  Model:     ${config.defaultModel}`);
+  console.log(`  Server:       http://localhost:${config.port}`);
+  console.log(`  Source auth:  ${config.authPath}`);
+  console.log(`  Pool dir:     ${config.accountsDir}`);
+  console.log(`  Events log:   ${config.eventsLogPath}`);
+  console.log(`  Model:        ${config.defaultModel}`);
+  console.log(
+    `  Pool state:   ${stats.total} account(s) — ${stats.healthy} healthy, ${stats.cooldown} cooldown, ${stats.dead} dead`,
+  );
   console.log("");
+
+  if (stats.total === 0) {
+    console.log("  ⚠  Pool is empty. Run 'codex auth login' — the proxy will harvest it automatically.");
+    console.log("");
+  }
 
   if (config.keyGenerated) {
     console.log("  ⚠  New API key generated and saved to .env:");
@@ -27,8 +44,13 @@ app.listen(config.port, () => {
   console.log(`  ${config.apiKey}`);
   console.log("");
   console.log("  Endpoints:");
-  console.log("    POST /v1/images/generations  — Generate images");
-  console.log("    GET  /health                 — Server status");
+  console.log("    POST /v1/images/generations         — Text-to-image (JSON)");
+  console.log("    POST /v1/images/edits               — Image-to-image (multipart)");
+  console.log("    GET  /health                        — Server + pool status");
+  console.log("    GET  /admin/accounts                — List pool");
+  console.log("    POST /admin/harvest                 — Harvest ~/.codex/auth.json");
+  console.log("    POST /admin/accounts/:id/revive     — Revive dead account");
+  console.log("    DELETE /admin/accounts/:id          — Remove account");
   console.log("");
   console.log("  Example:");
   console.log(`    curl -X POST http://localhost:${config.port}/v1/images/generations \\`);
@@ -38,13 +60,13 @@ app.listen(config.port, () => {
   console.log("");
 });
 
-// Graceful shutdown
-process.on("SIGINT", () => {
-  console.log("\n[server] Shutting down...");
-  process.exit(0);
-});
+async function shutdown(signal) {
+  console.log(`\n[server] Received ${signal}, shutting down...`);
+  await pool.stop();
+  server.close(() => process.exit(0));
+  // Force-exit if something hangs.
+  setTimeout(() => process.exit(0), 3000).unref();
+}
 
-process.on("SIGTERM", () => {
-  console.log("\n[server] Shutting down...");
-  process.exit(0);
-});
+process.on("SIGINT", () => shutdown("SIGINT"));
+process.on("SIGTERM", () => shutdown("SIGTERM"));

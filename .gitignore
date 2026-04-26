@@ -1,5 +1,7 @@
 node_modules/
 .env
 output/
+.runtime/
+.omc/
 *.tmp
 *.log
