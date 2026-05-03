@@ -261,6 +261,23 @@ copy .env.docker.example .env.docker
 docker compose up -d --build
 ```
 
+Hoặc dùng image build sẵn từ GitHub Container Registry sau khi GitHub Action chạy xong:
+
+```bash
+docker pull ghcr.io/ngojclee/codex-imagegen:latest
+docker run -d --name codex-imagegen \
+  -p 3456:3456 \
+  --env-file .env.docker \
+  -v codex-imagegen-data:/data \
+  ghcr.io/ngojclee/codex-imagegen:latest
+```
+
+Mỗi lần push lên `master`, GitHub Actions sẽ:
+- kiểm tra syntax Node
+- kiểm tra `docker compose config`
+- build Docker image và push lên `ghcr.io/ngojclee/codex-imagegen`
+- tạo artifact `codex-imagegen-portable.zip` trong tab Actions để tải về chạy local
+
 Mặc định container dùng volume `codex-imagegen-data` tại `/data`:
 - `/data/auth.json` cho harvest nếu bạn mount/copy auth source vào đây
 - `/data/pool/accounts` cho các account đã import
