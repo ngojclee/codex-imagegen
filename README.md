@@ -272,6 +272,22 @@ docker run -d --name codex-imagegen \
   ghcr.io/ngojclee/codex-imagegen:latest
 ```
 
+### Portainer stack
+
+Dùng stack mẫu tại `deploy/portainer-stack.yml`.
+
+1. Portainer → **Stacks** → **Add stack**
+2. Copy nội dung `deploy/portainer-stack.yml` vào Web editor
+3. Copy các biến trong `deploy/portainer.env.example` vào **Environment variables**
+4. Sửa ít nhất:
+   - `PROXY_API_KEY`
+   - `MANAGEMENT_PASSWORD`
+   - `MANAGEMENT_SESSION_SECRET`
+5. Deploy stack
+6. Mở `http://<docker-host>:3456/management`
+
+Stack dùng image `ghcr.io/ngojclee/codex-imagegen:latest` và volume named `codex-imagegen-data` để giữ auth pool tại `/data`.
+
 Mỗi lần push lên `master`, GitHub Actions sẽ:
 - kiểm tra syntax Node
 - kiểm tra `docker compose config`

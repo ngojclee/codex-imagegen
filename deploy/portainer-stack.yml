@@ -1,0 +1,31 @@
+services:
+  codex-imagegen:
+    image: ghcr.io/ngojclee/codex-imagegen:latest
+    container_name: codex-imagegen
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3456}:3456"
+    environment:
+      PORT: "3456"
+      PROXY_API_KEY: "${PROXY_API_KEY}"
+      MANAGEMENT_PASSWORD: "${MANAGEMENT_PASSWORD}"
+      MANAGEMENT_SESSION_SECRET: "${MANAGEMENT_SESSION_SECRET}"
+      MANAGEMENT_SESSION_TTL_MS: "${MANAGEMENT_SESSION_TTL_MS:-43200000}"
+      OAUTH_REDIRECT_URI: "${OAUTH_REDIRECT_URI:-http://localhost:1455/auth/callback}"
+      OAUTH_SESSION_TTL_MS: "${OAUTH_SESSION_TTL_MS:-600000}"
+      CODEX_AUTH_PATH: "/data/auth.json"
+      POOL_ROOT: "/data/pool"
+      ACCOUNTS_DIR: "/data/pool/accounts"
+      EVENTS_LOG: "/data/pool/events.log"
+      OUTPUT_DIR: "/data/output"
+      CODEX_BASE_URL: "${CODEX_BASE_URL:-https://chatgpt.com/backend-api/codex}"
+      CODEX_REFRESH_URL: "${CODEX_REFRESH_URL:-https://auth.openai.com/oauth/token}"
+      DEFAULT_MODEL: "${DEFAULT_MODEL:-gpt-5.4}"
+      DEFAULT_TIMEOUT_MS: "${DEFAULT_TIMEOUT_MS:-900000}"
+      COOLDOWN_DEFAULT_MS: "${COOLDOWN_DEFAULT_MS:-60000}"
+    volumes:
+      - codex-imagegen-data:/data
+
+volumes:
+  codex-imagegen-data:
+    name: codex-imagegen-data
