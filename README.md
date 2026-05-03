@@ -294,6 +294,14 @@ DATA_DIR=/home/Docker/CLIProxyAPI/codex-imagegen/data
 
 Thư mục host này sẽ giữ auth pool, event log, và output runtime.
 
+Nếu Portainer báo `unauthorized` khi pull `ghcr.io/ngojclee/codex-imagegen:latest`, image/package GHCR đang private. Cách xử lý:
+- vào Portainer → **Registries** → add registry `ghcr.io`
+- username: GitHub username
+- password/token: GitHub PAT có scope `read:packages`
+- chọn registry đó cho stack, hoặc chạy `docker login ghcr.io` trên Docker host
+
+Nếu muốn pull không cần login, đặt package `codex-imagegen` trên GitHub Packages/GHCR sang public.
+
 Mỗi lần push lên `master`, GitHub Actions sẽ:
 - kiểm tra syntax Node
 - kiểm tra `docker compose config`

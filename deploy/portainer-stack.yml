@@ -1,3 +1,5 @@
+version: "3.9"
+
 services:
   codex-imagegen:
     image: ghcr.io/ngojclee/codex-imagegen:latest
