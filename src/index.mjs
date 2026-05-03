@@ -18,7 +18,7 @@ const server = app.listen(config.port, () => {
 
   console.log("");
   console.log("  ┌─────────────────────────────────────────┐");
-  console.log("  │        Codex ImageGen Proxy v0.3.0.0     │");
+  console.log("  │        Codex ImageGen Proxy v0.4.0.0     │");
   console.log("  └─────────────────────────────────────────┘");
   console.log("");
   console.log(`  Server:       http://localhost:${config.port}`);
@@ -51,6 +51,7 @@ const server = app.listen(config.port, () => {
   console.log("    POST /admin/harvest                 — Harvest ~/.codex/auth.json");
   console.log("    POST /admin/accounts/:id/revive     — Revive dead account");
   console.log("    DELETE /admin/accounts/:id          — Remove account");
+  console.log("    GET  /management                    — Browser management UI");
   console.log("");
   console.log("  Example:");
   console.log(`    curl -X POST http://localhost:${config.port}/v1/images/generations \\`);

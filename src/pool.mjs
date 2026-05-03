@@ -13,7 +13,7 @@
 import { readFile, writeFile, readdir, mkdir, unlink } from "node:fs/promises";
 import { existsSync, watch } from "node:fs";
 import path from "node:path";
-import { readAuth } from "./auth.mjs";
+import { parseAuthJson, readAuth } from "./auth.mjs";
 
 const DEFAULT_COOLDOWN_MS = 60_000;
 const POLL_INTERVAL_MS = 30_000;
@@ -203,6 +203,50 @@ export class AuthPool {
     } finally {
       this._harvestPending = false;
     }
+  }
+
+  async importAuthJson(authJson) {
+    const auth = parseAuthJson(authJson, "<management-import>");
+    const id = auth.accountId;
+    if (!id) return { status: "invalid_source", reason: "no account_id" };
+
+    const email = extractEmail(auth);
+    const targetPath = path.join(this.accountsDir, `${sanitizeFileId(id)}.json`);
+    const raw = `${JSON.stringify(authJson, null, 2)}\n`;
+
+    if (existsSync(targetPath)) {
+      const existingRaw = await readFile(targetPath, "utf8");
+      if (existingRaw === raw) {
+        return { status: "unchanged", account_id: id, email };
+      }
+
+      await writeFile(targetPath, raw, { mode: 0o600 });
+      const existing = this.accounts.get(id);
+      if (existing) {
+        existing.status = "healthy";
+        existing.cooldownUntil = 0;
+        existing.deadReason = null;
+        existing.email = email;
+      }
+      this._logEvent("import_update", { account_id: id, email });
+      return { status: "updated", account_id: id, email };
+    }
+
+    await writeFile(targetPath, raw, { mode: 0o600 });
+    this.accounts.set(id, {
+      id,
+      filePath: targetPath,
+      status: "healthy",
+      cooldownUntil: 0,
+      deadReason: null,
+      lastUsedAt: 0,
+      addedAt: Date.now(),
+      email,
+      useCount: 0,
+    });
+    this.queue.push(id);
+    this._logEvent("import_new", { account_id: id, email });
+    return { status: "added", account_id: id, email };
   }
 
   _startWatcher() {

@@ -1,0 +1,15 @@
+.git
+.env
+.env.*
+!.env.example
+!.env.docker.example
+node_modules
+output
+.runtime
+.runtime-test
+.omc
+.omx
+*.log
+*.tmp
+Dockerfile
+docker-compose.yml

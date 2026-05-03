@@ -52,7 +52,14 @@ export async function readAuth(authPath) {
 
   const raw = await readFile(authPath, "utf8");
   const auth = JSON.parse(raw);
+  return parseAuthJson(auth, authPath);
+}
 
+/**
+ * Parse and validate an already-loaded auth JSON object.
+ * This is used by both file reads and management UI imports.
+ */
+export function parseAuthJson(auth, authPath = "<inline-auth-json>") {
   // ── Codex auth.json ──
   if (auth.tokens && typeof auth.tokens === "object") {
     if (auth.auth_mode && auth.auth_mode !== "chatgpt") {

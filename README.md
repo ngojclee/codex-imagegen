@@ -172,7 +172,7 @@ Kiểm tra trạng thái server và pool.
   "server": {
     "port": 3456,
     "default_model": "gpt-5.4",
-    "version": "0.3.0.0"
+    "version": "0.4.0.0"
   }
 }
 ```
@@ -222,6 +222,46 @@ Tất cả dùng cùng `PROXY_API_KEY` như endpoint gen ảnh.
 | `POST /admin/harvest` | Force re-scan `~/.codex/auth.json` (backup nếu watcher miss event) |
 | `POST /admin/accounts/:id/revive` | Reset dead/cooldown account về healthy để test lại |
 | `DELETE /admin/accounts/:id` | Xóa account khỏi pool (xóa cả file) |
+
+## Management UI
+
+Bật giao diện quản trị bằng biến môi trường `MANAGEMENT_PASSWORD`, rồi mở:
+
+```bash
+http://localhost:3456/management
+```
+
+Trang này dùng password gate riêng, không dùng `PROXY_API_KEY`. Sau khi đăng nhập có thể:
+- xem pool/stats
+- import raw `auth.json` bằng paste hoặc upload file
+- gọi harvest thủ công từ `CODEX_AUTH_PATH`
+- revive hoặc xóa account trong pool
+
+Auth import chỉ cần file thô hợp lệ theo format Codex OAuth (`auth.json` có `tokens.access_token`, `tokens.refresh_token`, `tokens.account_id`). App sẽ lưu bản copy vào `ACCOUNTS_DIR` và tiếp tục tự refresh bằng `refresh_token` khi token gần hết hạn.
+
+Không nên hardcode token vào image Docker. Dùng volume hoặc import qua UI để giữ auth ở runtime storage.
+
+## Docker
+
+Có thể chạy app bằng Docker để không cần chạy trực tiếp trên máy local.
+
+```bash
+copy .env.docker.example .env.docker
+# sửa PROXY_API_KEY, MANAGEMENT_PASSWORD, MANAGEMENT_SESSION_SECRET
+docker compose up -d --build
+```
+
+Mặc định container dùng volume `codex-imagegen-data` tại `/data`:
+- `/data/auth.json` cho harvest nếu bạn mount/copy auth source vào đây
+- `/data/pool/accounts` cho các account đã import
+- `/data/pool/events.log` cho event log
+- `/data/output` cho output runtime
+
+Import auth vào Docker có 2 cách:
+1. mở `/management`, nhập `MANAGEMENT_PASSWORD`, upload/paste `auth.json`
+2. copy file vào volume/container làm `/data/auth.json`, rồi bấm Harvest hoặc gọi `POST /management/api/harvest`
+
+Tự login OAuth hoàn toàn trong container thường không ổn vì `codex auth login` cần browser/device interaction và lưu credential theo môi trường user. Cách bền hơn là login một lần bằng Codex CLI ở máy có browser, lấy raw `~/.codex/auth.json`, import vào pool. Sau đó server tự refresh access token bằng `refresh_token` cho tới khi token bị revoke/expired.
 
 ## Ví dụ sử dụng
 
@@ -280,6 +320,9 @@ const { data } = await response.json();
 | `COOLDOWN_DEFAULT_MS` | `60000` | TTL cooldown mặc định khi gặp 429/403 |
 | `DEFAULT_MODEL` | `gpt-5.4` | Model mặc định |
 | `DEFAULT_TIMEOUT_MS` | `900000` | Timeout request |
+| `MANAGEMENT_PASSWORD` | empty | Password bật `/management`; empty = disabled |
+| `MANAGEMENT_SESSION_SECRET` | `PROXY_API_KEY` | Secret ký cookie session |
+| `MANAGEMENT_SESSION_TTL_MS` | `43200000` | TTL session management |
 
 ## License
 

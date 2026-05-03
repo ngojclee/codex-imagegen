@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Codex ImageGen Management</title>
+    <link rel="stylesheet" href="/management/assets/management.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section id="loginView" class="panel login-panel" hidden>
+        <div>
+          <p class="eyebrow">Codex ImageGen</p>
+          <h1>Management</h1>
+        </div>
+        <form id="loginForm" class="stack">
+          <label>
+            <span>Password</span>
+            <input id="password" type="password" autocomplete="current-password" required />
+          </label>
+          <button type="submit">Sign in</button>
+        </form>
+        <p id="loginMessage" class="message"></p>
+      </section>
+
+      <section id="disabledView" class="panel login-panel" hidden>
+        <p class="eyebrow">Management disabled</p>
+        <h1>Set MANAGEMENT_PASSWORD</h1>
+        <p class="muted">Restart the server after setting the env var.</p>
+      </section>
+
+      <section id="appView" hidden>
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Codex ImageGen</p>
+            <h1>Auth Pool</h1>
+          </div>
+          <div class="actions">
+            <button id="harvestBtn" type="button">Harvest</button>
+            <button id="refreshBtn" type="button">Refresh</button>
+            <button id="logoutBtn" type="button" class="secondary">Logout</button>
+          </div>
+        </header>
+
+        <section class="stats-grid" aria-label="Pool stats">
+          <article><span>Total</span><strong id="statTotal">0</strong></article>
+          <article><span>Healthy</span><strong id="statHealthy">0</strong></article>
+          <article><span>Cooldown</span><strong id="statCooldown">0</strong></article>
+          <article><span>Dead</span><strong id="statDead">0</strong></article>
+        </section>
+
+        <section class="grid">
+          <article class="panel">
+            <h2>Import Auth</h2>
+            <form id="importForm" class="stack">
+              <label>
+                <span>auth.json</span>
+                <input id="authFile" name="auth" type="file" accept=".json,application/json" />
+              </label>
+              <label>
+                <span>Raw JSON</span>
+                <textarea id="authJson" name="auth_json" spellcheck="false"></textarea>
+              </label>
+              <button type="submit">Import</button>
+            </form>
+            <p id="importMessage" class="message"></p>
+          </article>
+
+          <article class="panel accounts-panel">
+            <div class="section-head">
+              <h2>Accounts</h2>
+              <span id="lastUpdated" class="muted"></span>
+            </div>
+            <div id="accounts" class="accounts"></div>
+          </article>
+        </section>
+      </section>
+    </main>
+
+    <script src="/management/assets/management.js" type="module"></script>
+  </body>
+</html>

@@ -33,5 +33,12 @@
 ## Phase 4: Git & Release
 - [x] git init + initial commit
 - [x] Debug + error capture improvements committed
-- [ ] GitHub remote setup
-- [ ] Push to GitHub
+- [x] GitHub remote setup
+- [x] Push to GitHub
+
+## Phase 5: Docker & Management
+- [x] Dockerfile + docker-compose setup
+- [x] Management password gate via `MANAGEMENT_PASSWORD`
+- [x] Browser UI for auth pool status/import/revive/delete
+- [x] Raw auth JSON import into account pool
+- [x] Docker/runtime auth guidance documented

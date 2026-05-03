@@ -1,0 +1,16 @@
+services:
+  codex-imagegen:
+    build: .
+    image: codex-imagegen:latest
+    container_name: codex-imagegen
+    restart: unless-stopped
+    ports:
+      - "3456:3456"
+    env_file:
+      - path: .env.docker
+        required: false
+    volumes:
+      - codex-imagegen-data:/data
+
+volumes:
+  codex-imagegen-data:

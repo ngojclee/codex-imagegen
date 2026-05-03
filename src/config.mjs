@@ -99,8 +99,15 @@ export function loadConfig() {
       `CODEX_AUTH_PATH=${authPath}`,
       `CODEX_BASE_URL=${baseUrl}`,
       `CODEX_REFRESH_URL=${refreshUrl}`,
+      "POOL_ROOT=",
+      "ACCOUNTS_DIR=",
+      "EVENTS_LOG=",
+      `COOLDOWN_DEFAULT_MS=${cooldownDefaultMs}`,
       `DEFAULT_MODEL=${defaultModel}`,
       `DEFAULT_TIMEOUT_MS=${defaultTimeout}`,
+      "MANAGEMENT_PASSWORD=",
+      "MANAGEMENT_SESSION_SECRET=",
+      "MANAGEMENT_SESSION_TTL_MS=43200000",
       "",
     ].join("\n");
 
@@ -109,6 +116,13 @@ export function loadConfig() {
 
   // Ensure output directory exists
   mkdirSync(outputDir, { recursive: true });
+
+  const managementPassword = get("MANAGEMENT_PASSWORD", "");
+  const managementSessionSecret = get("MANAGEMENT_SESSION_SECRET", apiKey);
+  const managementSessionTtlMs = parseInt(
+    get("MANAGEMENT_SESSION_TTL_MS", "43200000"),
+    10,
+  );
 
   return {
     port,
@@ -124,6 +138,9 @@ export function loadConfig() {
     accountsDir,
     eventsLogPath,
     cooldownDefaultMs,
+    managementPassword,
+    managementSessionSecret,
+    managementSessionTtlMs,
     projectRoot: PROJECT_ROOT,
   };
 }

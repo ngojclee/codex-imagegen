@@ -4,6 +4,9 @@
  */
 import express from "express";
 import multer from "multer";
+import crypto from "node:crypto";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   readAuth,
   refreshAuth,
@@ -11,6 +14,10 @@ import {
 } from "./auth.mjs";
 import { generateImages, CodexApiError } from "./generate.mjs";
 import { NoHealthyAccountsError } from "./pool.mjs";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const PUBLIC_DIR = path.resolve(__dirname, "..", "public");
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB per file (per OpenAI-compat spec)
 const MAX_FILES = 5; // up to 3 image[] + 1 mask + buffer
@@ -48,6 +55,52 @@ function logIgnoredFields(endpoint, body) {
   if (body?.n !== undefined && body?.n !== "") {
     console.log(`[server] ${endpoint} accepted-and-ignored: { n: ${body.n} }`);
   }
+}
+
+function parseCookies(header = "") {
+  const cookies = {};
+  for (const part of header.split(";")) {
+    const index = part.indexOf("=");
+    if (index === -1) continue;
+    const key = part.slice(0, index).trim();
+    const value = part.slice(index + 1).trim();
+    if (key) cookies[key] = decodeURIComponent(value);
+  }
+  return cookies;
+}
+
+function safeEqual(a, b) {
+  const left = Buffer.from(String(a));
+  const right = Buffer.from(String(b));
+  return left.length === right.length && crypto.timingSafeEqual(left, right);
+}
+
+function signSession(payload, secret) {
+  const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const sig = crypto.createHmac("sha256", secret).update(body).digest("base64url");
+  return `${body}.${sig}`;
+}
+
+function verifySession(token, secret) {
+  if (!token || !token.includes(".")) return false;
+  const [body, sig] = token.split(".");
+  const expected = crypto.createHmac("sha256", secret).update(body).digest("base64url");
+  if (!safeEqual(sig, expected)) return false;
+  try {
+    const payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
+    return Number(payload.exp) > Date.now();
+  } catch {
+    return false;
+  }
+}
+
+function redactAccount(account) {
+  return {
+    ...account,
+    display_id: account.id.length > 10
+      ? `${account.id.slice(0, 6)}...${account.id.slice(-4)}`
+      : account.id,
+  };
 }
 
 /**
@@ -168,6 +221,24 @@ export function createServer(config, pool) {
     next();
   };
 
+  const requireManagement = (req, res, next) => {
+    if (!config.managementPassword) {
+      return res.status(503).json({
+        error: {
+          message: "Management UI is disabled. Set MANAGEMENT_PASSWORD to enable it.",
+          type: "management_disabled",
+        },
+      });
+    }
+    const cookies = parseCookies(req.headers.cookie || "");
+    if (!verifySession(cookies.mgmt_session, config.managementSessionSecret)) {
+      return res.status(401).json({
+        error: { message: "Management login required", type: "auth_error" },
+      });
+    }
+    next();
+  };
+
   const sendError = (res, error, startTime) => {
     const status =
       error instanceof NoHealthyAccountsError
@@ -203,12 +274,127 @@ export function createServer(config, pool) {
       server: {
         port: config.port,
         default_model: config.defaultModel,
-        version: "0.3.0.0",
+        version: "0.4.0.0",
       },
     });
   });
 
   app.get("/v1/health", (_req, res) => res.redirect("/health"));
+
+  app.get("/management", (_req, res) => {
+    res.sendFile(path.join(PUBLIC_DIR, "management.html"));
+  });
+
+  app.use("/management/assets", express.static(path.join(PUBLIC_DIR, "assets")));
+
+  app.get("/management/api/session", (req, res) => {
+    const cookies = parseCookies(req.headers.cookie || "");
+    const enabled = Boolean(config.managementPassword);
+    const authenticated = enabled && verifySession(
+      cookies.mgmt_session,
+      config.managementSessionSecret,
+    );
+    res.json({ enabled, authenticated });
+  });
+
+  app.post("/management/api/login", (req, res) => {
+    if (!config.managementPassword) {
+      return res.status(503).json({
+        error: {
+          message: "Management UI is disabled. Set MANAGEMENT_PASSWORD to enable it.",
+          type: "management_disabled",
+        },
+      });
+    }
+
+    const password = typeof req.body?.password === "string" ? req.body.password : "";
+    if (!safeEqual(password, config.managementPassword)) {
+      return res.status(401).json({
+        error: { message: "Invalid password", type: "auth_error" },
+      });
+    }
+
+    const ttl = Number.isFinite(config.managementSessionTtlMs)
+      ? config.managementSessionTtlMs
+      : 43_200_000;
+    const token = signSession({ exp: Date.now() + ttl }, config.managementSessionSecret);
+    res.setHeader(
+      "Set-Cookie",
+      `mgmt_session=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${Math.ceil(ttl / 1000)}`,
+    );
+    res.json({ ok: true });
+  });
+
+  app.post("/management/api/logout", (_req, res) => {
+    res.setHeader(
+      "Set-Cookie",
+      "mgmt_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0",
+    );
+    res.json({ ok: true });
+  });
+
+  app.get("/management/api/accounts", requireManagement, (_req, res) => {
+    res.json({ stats: pool.stats(), accounts: pool.list().map(redactAccount) });
+  });
+
+  app.post("/management/api/harvest", requireManagement, async (_req, res) => {
+    try {
+      const result = await pool.harvestFromCodex();
+      res.json({ ok: true, result, stats: pool.stats() });
+    } catch (err) {
+      res.status(500).json({ error: { message: err.message, type: "server_error" } });
+    }
+  });
+
+  app.post("/management/api/import", requireManagement, handleUpload, async (req, res) => {
+    try {
+      const file = Array.isArray(req.files)
+        ? req.files.find((f) => f.fieldname === "auth")
+        : null;
+      const raw = file?.buffer?.toString("utf8") || req.body?.auth_json || "";
+      if (!raw.trim()) {
+        return res.status(400).json({
+          error: { message: "Paste auth JSON or upload an auth file.", type: "invalid_request_error" },
+        });
+      }
+
+      let authJson;
+      try {
+        authJson = JSON.parse(raw);
+      } catch (err) {
+        return res.status(400).json({
+          error: { message: `Invalid JSON: ${err.message}`, type: "invalid_request_error" },
+        });
+      }
+
+      const result = await pool.importAuthJson(authJson);
+      res.json({ ok: true, result, stats: pool.stats() });
+    } catch (err) {
+      res.status(400).json({
+        error: { message: err.message, type: "invalid_request_error" },
+      });
+    }
+  });
+
+  app.post("/management/api/accounts/:id/revive", requireManagement, (req, res) => {
+    const ok = pool.revive(req.params.id);
+    if (!ok) {
+      return res.status(404).json({
+        error: { message: `Account not found: ${req.params.id}`, type: "not_found" },
+      });
+    }
+    res.json({ ok: true, stats: pool.stats() });
+  });
+
+  app.delete("/management/api/accounts/:id", requireManagement, async (req, res) => {
+    const ok = await pool.remove(req.params.id);
+    if (!ok) {
+      return res.status(404).json({
+        error: { message: `Account not found: ${req.params.id}`, type: "not_found" },
+      });
+    }
+    res.json({ ok: true, stats: pool.stats() });
+  });
 
   /**
    * POST /v1/images/generations — text-to-image (JSON body).
