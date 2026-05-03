@@ -50,6 +50,30 @@
         </section>
 
         <section class="grid">
+          <div class="left-column">
+          <article class="panel">
+            <h2>OAuth Login</h2>
+            <div class="stack">
+              <button id="oauthStartBtn" type="button">Create Login Link</button>
+              <label>
+                <span>Login URL</span>
+                <textarea id="oauthUrl" readonly spellcheck="false"></textarea>
+              </label>
+              <div class="actions wrap-actions">
+                <button id="copyOauthBtn" type="button" class="secondary">Copy</button>
+                <button id="openOauthBtn" type="button" class="secondary">Open</button>
+              </div>
+              <form id="oauthCompleteForm" class="stack">
+                <label>
+                  <span>Callback URL</span>
+                  <textarea id="callbackUrl" name="callback_url" spellcheck="false"></textarea>
+                </label>
+                <button type="submit">Complete Login</button>
+              </form>
+            </div>
+            <p id="oauthMessage" class="message"></p>
+          </article>
+
           <article class="panel">
             <h2>Import Auth</h2>
             <form id="importForm" class="stack">
@@ -65,6 +89,7 @@
             </form>
             <p id="importMessage" class="message"></p>
           </article>
+          </div>
 
           <article class="panel accounts-panel">
             <div class="section-head">

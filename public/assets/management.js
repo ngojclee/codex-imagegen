@@ -5,6 +5,10 @@ const loginForm = document.querySelector("#loginForm");
 const loginMessage = document.querySelector("#loginMessage");
 const importForm = document.querySelector("#importForm");
 const importMessage = document.querySelector("#importMessage");
+const oauthCompleteForm = document.querySelector("#oauthCompleteForm");
+const oauthMessage = document.querySelector("#oauthMessage");
+const oauthUrl = document.querySelector("#oauthUrl");
+const callbackUrl = document.querySelector("#callbackUrl");
 const accountsEl = document.querySelector("#accounts");
 
 const stats = {
@@ -138,6 +142,49 @@ importForm.addEventListener("submit", async (event) => {
     await loadAccounts();
   } catch (err) {
     setMessage(importMessage, err.message, "error");
+  } finally {
+    submit.disabled = false;
+  }
+});
+
+document.querySelector("#oauthStartBtn").addEventListener("click", async () => {
+  setMessage(oauthMessage, "Creating login link...");
+  try {
+    const result = await request("/management/api/oauth/start", { method: "POST" });
+    oauthUrl.value = result.authorize_url;
+    setMessage(oauthMessage, `Login link ready. Expires in ${result.expires_in_seconds}s.`, "ok");
+  } catch (err) {
+    setMessage(oauthMessage, err.message, "error");
+  }
+});
+
+document.querySelector("#copyOauthBtn").addEventListener("click", async () => {
+  if (!oauthUrl.value) return setMessage(oauthMessage, "Create a login link first.", "error");
+  await navigator.clipboard.writeText(oauthUrl.value);
+  setMessage(oauthMessage, "Login URL copied.", "ok");
+});
+
+document.querySelector("#openOauthBtn").addEventListener("click", () => {
+  if (!oauthUrl.value) return setMessage(oauthMessage, "Create a login link first.", "error");
+  window.open(oauthUrl.value, "_blank", "noopener,noreferrer");
+});
+
+oauthCompleteForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const submit = oauthCompleteForm.querySelector('button[type="submit"]');
+  submit.disabled = true;
+  setMessage(oauthMessage, "Exchanging callback code...");
+  try {
+    const result = await request("/management/api/oauth/complete", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ callback_url: callbackUrl.value }),
+    });
+    setMessage(oauthMessage, `OAuth login imported: ${result.result.status}`, "ok");
+    callbackUrl.value = "";
+    await loadAccounts();
+  } catch (err) {
+    setMessage(oauthMessage, err.message, "error");
   } finally {
     submit.disabled = false;
   }

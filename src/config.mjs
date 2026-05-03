@@ -108,6 +108,8 @@ export function loadConfig() {
       "MANAGEMENT_PASSWORD=",
       "MANAGEMENT_SESSION_SECRET=",
       "MANAGEMENT_SESSION_TTL_MS=43200000",
+      "OAUTH_REDIRECT_URI=http://localhost:1455/auth/callback",
+      "OAUTH_SESSION_TTL_MS=600000",
       "",
     ].join("\n");
 
@@ -123,6 +125,11 @@ export function loadConfig() {
     get("MANAGEMENT_SESSION_TTL_MS", "43200000"),
     10,
   );
+  const oauthRedirectUri = get(
+    "OAUTH_REDIRECT_URI",
+    "http://localhost:1455/auth/callback",
+  );
+  const oauthSessionTtlMs = parseInt(get("OAUTH_SESSION_TTL_MS", "600000"), 10);
 
   return {
     port,
@@ -141,6 +148,8 @@ export function loadConfig() {
     managementPassword,
     managementSessionSecret,
     managementSessionTtlMs,
+    oauthRedirectUri,
+    oauthSessionTtlMs,
     projectRoot: PROJECT_ROOT,
   };
 }

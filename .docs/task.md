@@ -42,3 +42,4 @@
 - [x] Browser UI for auth pool status/import/revive/delete
 - [x] Raw auth JSON import into account pool
 - [x] Docker/runtime auth guidance documented
+- [x] Manual OAuth login link + callback paste flow

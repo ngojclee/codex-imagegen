@@ -75,6 +75,8 @@ button:disabled { opacity: 0.55; cursor: wait; }
   gap: 12px;
 }
 
+.wrap-actions { flex-wrap: wrap; }
+
 .topbar,
 .section-head { justify-content: space-between; }
 
@@ -146,6 +148,8 @@ textarea {
   gap: 12px;
   align-items: start;
 }
+
+.left-column { display: grid; gap: 12px; }
 
 .accounts { display: grid; gap: 10px; margin-top: 14px; }
 

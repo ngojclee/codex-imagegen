@@ -3,13 +3,25 @@
  * Handles reading Codex/OpenClaw auth files, JWT decoding, and token refresh.
  * Adapted from codex-imagen auth logic.
  */
+import crypto from "node:crypto";
 import { readFile, writeFile, rename, mkdir, chmod } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 
-const CODEX_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
+export const CODEX_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
+export const CODEX_OAUTH_AUTHORIZE_URL = "https://auth.openai.com/oauth/authorize";
 const REFRESH_SKEW_SECONDS = 120; // Refresh 2 minutes before expiry
 const REFRESH_TIMEOUT_MS = 30_000;
+
+function base64Url(input) {
+  return Buffer.from(input).toString("base64url");
+}
+
+export function createPkceChallenge() {
+  const verifier = base64Url(crypto.randomBytes(32));
+  const challenge = base64Url(crypto.createHash("sha256").update(verifier).digest());
+  return { verifier, challenge };
+}
 
 // ─── JWT Helpers ──────────────────────────────────────────────────────────────
 
@@ -30,6 +42,99 @@ function decodeJwtPayload(token) {
     return JSON.parse(base64UrlDecode(parts[1]));
   } catch {
     return null;
+  }
+}
+
+function pickAccountIdFromClaims(claims) {
+  if (!claims || typeof claims !== "object") return null;
+  const direct = claims.account_id || claims.accountId || claims["https://api.openai.com/account_id"];
+  if (typeof direct === "string" && direct) return direct;
+
+  const auth = claims["https://api.openai.com/auth"];
+  if (auth && typeof auth === "object") {
+    const authId = auth.account_id || auth.accountId || auth.user_id || auth.userId;
+    if (typeof authId === "string" && authId) return authId;
+    const orgs = auth.orgs || auth.organizations;
+    if (Array.isArray(orgs) && orgs[0]) {
+      const firstOrg = orgs[0];
+      const orgId = firstOrg.account_id || firstOrg.accountId || firstOrg.id;
+      if (typeof orgId === "string" && orgId) return orgId;
+    }
+  }
+
+  const orgs = claims.orgs || claims.organizations;
+  if (Array.isArray(orgs) && orgs[0]) {
+    const firstOrg = orgs[0];
+    const orgId = firstOrg.account_id || firstOrg.accountId || firstOrg.id;
+    if (typeof orgId === "string" && orgId) return orgId;
+  }
+
+  return typeof claims.sub === "string" && claims.sub ? claims.sub : null;
+}
+
+function buildCodexAuthJson(tokens) {
+  const accessToken = tokens.access_token;
+  if (!accessToken) throw new Error("OAuth token response did not include access_token");
+
+  const accessClaims = decodeJwtPayload(accessToken);
+  const idClaims = decodeJwtPayload(tokens.id_token);
+  const accountId =
+    tokens.account_id ||
+    tokens.accountId ||
+    pickAccountIdFromClaims(accessClaims) ||
+    pickAccountIdFromClaims(idClaims);
+
+  if (!accountId) {
+    throw new Error("OAuth token response did not include an account_id and it could not be inferred from JWT claims.");
+  }
+
+  return {
+    auth_mode: "chatgpt",
+    tokens: {
+      access_token: accessToken,
+      refresh_token: tokens.refresh_token,
+      id_token: tokens.id_token,
+      account_id: accountId,
+    },
+    last_refresh: new Date().toISOString(),
+  };
+}
+
+export async function exchangeOAuthCode(config, { code, codeVerifier, redirectUri }) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REFRESH_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(config.refreshUrl, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "user-agent": "codex-imagegen/0.4.0",
+      },
+      body: JSON.stringify({
+        client_id: CODEX_OAUTH_CLIENT_ID,
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: redirectUri,
+        code_verifier: codeVerifier,
+      }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`OAuth code exchange failed (HTTP ${response.status}): ${body}`);
+    }
+
+    const tokens = await response.json();
+    return buildCodexAuthJson(tokens);
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(`OAuth code exchange timed out after ${REFRESH_TIMEOUT_MS}ms.`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

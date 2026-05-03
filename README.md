@@ -233,11 +233,21 @@ http://localhost:3456/management
 
 Trang này dùng password gate riêng, không dùng `PROXY_API_KEY`. Sau khi đăng nhập có thể:
 - xem pool/stats
+- tạo link OAuth login kiểu Codex CLI, rồi paste callback URL để import token
 - import raw `auth.json` bằng paste hoặc upload file
 - gọi harvest thủ công từ `CODEX_AUTH_PATH`
 - revive hoặc xóa account trong pool
 
 Auth import chỉ cần file thô hợp lệ theo format Codex OAuth (`auth.json` có `tokens.access_token`, `tokens.refresh_token`, `tokens.account_id`). App sẽ lưu bản copy vào `ACCOUNTS_DIR` và tiếp tục tự refresh bằng `refresh_token` khi token gần hết hạn.
+
+OAuth login trong UI hoạt động theo kiểu manual callback:
+1. bấm **Create Login Link** để app tạo `state`, PKCE `code_challenge`, và authorize URL
+2. mở/copy link đó, login OpenAI trong browser trên máy của bạn
+3. browser redirect về `OAUTH_REDIRECT_URI` mặc định `http://localhost:1455/auth/callback`; nếu trang báo không kết nối được cũng không sao
+4. copy nguyên URL trên address bar dạng `http://localhost:1455/auth/callback?code=...&state=...`
+5. paste vào **Callback URL** rồi bấm **Complete Login**
+
+Server sẽ đổi `code` lấy OAuth tokens bằng `code_verifier`, tạo auth JSON tương thích Codex, rồi import vào pool. `OAUTH_REDIRECT_URI` phải trùng redirect URI được dùng trong login link.
 
 Không nên hardcode token vào image Docker. Dùng volume hoặc import qua UI để giữ auth ở runtime storage.
 
@@ -257,9 +267,10 @@ Mặc định container dùng volume `codex-imagegen-data` tại `/data`:
 - `/data/pool/events.log` cho event log
 - `/data/output` cho output runtime
 
-Import auth vào Docker có 2 cách:
-1. mở `/management`, nhập `MANAGEMENT_PASSWORD`, upload/paste `auth.json`
-2. copy file vào volume/container làm `/data/auth.json`, rồi bấm Harvest hoặc gọi `POST /management/api/harvest`
+Import auth vào Docker có 3 cách:
+1. mở `/management`, nhập `MANAGEMENT_PASSWORD`, dùng OAuth Login rồi paste callback URL
+2. upload/paste `auth.json`
+3. copy file vào volume/container làm `/data/auth.json`, rồi bấm Harvest hoặc gọi `POST /management/api/harvest`
 
 Tự login OAuth hoàn toàn trong container thường không ổn vì `codex auth login` cần browser/device interaction và lưu credential theo môi trường user. Cách bền hơn là login một lần bằng Codex CLI ở máy có browser, lấy raw `~/.codex/auth.json`, import vào pool. Sau đó server tự refresh access token bằng `refresh_token` cho tới khi token bị revoke/expired.
 
@@ -323,6 +334,8 @@ const { data } = await response.json();
 | `MANAGEMENT_PASSWORD` | empty | Password bật `/management`; empty = disabled |
 | `MANAGEMENT_SESSION_SECRET` | `PROXY_API_KEY` | Secret ký cookie session |
 | `MANAGEMENT_SESSION_TTL_MS` | `43200000` | TTL session management |
+| `OAUTH_REDIRECT_URI` | `http://localhost:1455/auth/callback` | Redirect URI dùng trong manual OAuth login |
+| `OAUTH_SESSION_TTL_MS` | `600000` | TTL state/code_verifier chờ callback paste |
 
 ## License
 
