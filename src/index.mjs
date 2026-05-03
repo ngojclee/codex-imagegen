@@ -18,7 +18,7 @@ const server = app.listen(config.port, () => {
 
   console.log("");
   console.log("  ┌─────────────────────────────────────────┐");
-  console.log("  │        Codex ImageGen Proxy v0.4.0.0     │");
+  console.log("  │        Codex ImageGen Proxy v0.4.1.0     │");
   console.log("  └─────────────────────────────────────────┘");
   console.log("");
   console.log(`  Server:       http://localhost:${config.port}`);

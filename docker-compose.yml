@@ -11,6 +11,11 @@ services:
         required: false
     volumes:
       - codex-imagegen-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
 
 volumes:
   codex-imagegen-data:

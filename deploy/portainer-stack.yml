@@ -5,14 +5,21 @@ services:
     image: ghcr.io/ngojclee/codex-imagegen:latest
     container_name: codex-imagegen
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
     ports:
       - "${PORT:-3456}:3456"
     environment:
       PORT: "3456"
       PROXY_API_KEY: "${PROXY_API_KEY}"
+      ADMIN_API_KEY: "${ADMIN_API_KEY:-}"
       MANAGEMENT_PASSWORD: "${MANAGEMENT_PASSWORD}"
       MANAGEMENT_SESSION_SECRET: "${MANAGEMENT_SESSION_SECRET}"
       MANAGEMENT_SESSION_TTL_MS: "${MANAGEMENT_SESSION_TTL_MS:-43200000}"
+      MANAGEMENT_COOKIE_SECURE: "${MANAGEMENT_COOKIE_SECURE:-false}"
       OAUTH_REDIRECT_URI: "${OAUTH_REDIRECT_URI:-http://localhost:1455/auth/callback}"
       OAUTH_SESSION_TTL_MS: "${OAUTH_SESSION_TTL_MS:-600000}"
       CODEX_AUTH_PATH: "/data/auth.json"

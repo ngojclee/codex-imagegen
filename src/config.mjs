@@ -53,6 +53,7 @@ function loadEnvFile(envPath) {
 export function loadConfig() {
   const envPath = path.join(PROJECT_ROOT, ".env");
   const envVars = loadEnvFile(envPath);
+  const isProduction = process.env.NODE_ENV === "production";
 
   // Helper: process.env > .env file > default
   const get = (key, defaultValue = "") =>
@@ -81,11 +82,16 @@ export function loadConfig() {
   const eventsLogPath = get("EVENTS_LOG", path.join(poolRoot, "events.log"));
   const cooldownDefaultMs = parseInt(get("COOLDOWN_DEFAULT_MS", "60000"), 10);
 
+  const generatedManagementSessionSecret = randomBytes(32).toString("hex");
+
   // Auto-generate API key on first run
   let apiKey = get("PROXY_API_KEY", "");
   let keyGenerated = false;
 
   if (!apiKey) {
+    if (isProduction) {
+      throw new Error("PROXY_API_KEY is required when NODE_ENV=production.");
+    }
     apiKey = `sk-proxy-${randomBytes(24).toString("hex")}`;
     keyGenerated = true;
 
@@ -95,6 +101,7 @@ export function loadConfig() {
       "# Auto-generated on first run",
       "",
       `PROXY_API_KEY=${apiKey}`,
+      "ADMIN_API_KEY=",
       `PORT=${port}`,
       `CODEX_AUTH_PATH=${authPath}`,
       `CODEX_BASE_URL=${baseUrl}`,
@@ -106,8 +113,9 @@ export function loadConfig() {
       `DEFAULT_MODEL=${defaultModel}`,
       `DEFAULT_TIMEOUT_MS=${defaultTimeout}`,
       "MANAGEMENT_PASSWORD=",
-      "MANAGEMENT_SESSION_SECRET=",
+      `MANAGEMENT_SESSION_SECRET=${generatedManagementSessionSecret}`,
       "MANAGEMENT_SESSION_TTL_MS=43200000",
+      "MANAGEMENT_COOKIE_SECURE=false",
       "OAUTH_REDIRECT_URI=http://localhost:1455/auth/callback",
       "OAUTH_SESSION_TTL_MS=600000",
       "",
@@ -119,12 +127,18 @@ export function loadConfig() {
   // Ensure output directory exists
   mkdirSync(outputDir, { recursive: true });
 
+  const adminApiKey = get("ADMIN_API_KEY", "");
   const managementPassword = get("MANAGEMENT_PASSWORD", "");
-  const managementSessionSecret = get("MANAGEMENT_SESSION_SECRET", apiKey);
+  const configuredManagementSessionSecret = get("MANAGEMENT_SESSION_SECRET", "");
+  if (isProduction && managementPassword && !configuredManagementSessionSecret) {
+    throw new Error("MANAGEMENT_SESSION_SECRET is required when MANAGEMENT_PASSWORD is set in production.");
+  }
+  const managementSessionSecret = configuredManagementSessionSecret || generatedManagementSessionSecret;
   const managementSessionTtlMs = parseInt(
     get("MANAGEMENT_SESSION_TTL_MS", "43200000"),
     10,
   );
+  const managementCookieSecure = get("MANAGEMENT_COOKIE_SECURE", "false") === "true";
   const oauthRedirectUri = get(
     "OAUTH_REDIRECT_URI",
     "http://localhost:1455/auth/callback",
@@ -134,6 +148,7 @@ export function loadConfig() {
   return {
     port,
     apiKey,
+    adminApiKey,
     keyGenerated,
     authPath,
     baseUrl,
@@ -148,6 +163,7 @@ export function loadConfig() {
     managementPassword,
     managementSessionSecret,
     managementSessionTtlMs,
+    managementCookieSecure,
     oauthRedirectUri,
     oauthSessionTtlMs,
     projectRoot: PROJECT_ROOT,

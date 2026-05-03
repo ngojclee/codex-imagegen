@@ -30,9 +30,14 @@ function setMessage(el, text, type = "") {
 }
 
 async function request(url, options = {}) {
+  const method = (options.method || "GET").toUpperCase();
   const res = await fetch(url, {
     credentials: "same-origin",
-    headers: { "accept": "application/json", ...(options.headers || {}) },
+    headers: {
+      "accept": "application/json",
+      ...(method === "GET" ? {} : { "x-codex-imagegen-csrf": "1" }),
+      ...(options.headers || {}),
+    },
     ...options,
   });
   const data = await res.json().catch(() => ({}));

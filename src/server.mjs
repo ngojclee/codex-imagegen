@@ -26,6 +26,7 @@ const oauthSessions = new Map();
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB per file (per OpenAI-compat spec)
 const MAX_FILES = 5; // up to 3 image[] + 1 mask + buffer
+const loginAttempts = new Map();
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -74,6 +75,29 @@ function parseCookies(header = "") {
   return cookies;
 }
 
+function getClientIp(req) {
+  const forwarded = req.headers["x-forwarded-for"];
+  if (typeof forwarded === "string" && forwarded.trim()) {
+    return forwarded.split(",")[0].trim();
+  }
+  return req.socket?.remoteAddress || "unknown";
+}
+
+function isLoginRateLimited(req) {
+  const now = Date.now();
+  const windowMs = 5 * 60 * 1000;
+  const maxAttempts = 12;
+  const key = getClientIp(req);
+  const entry = loginAttempts.get(key) || { count: 0, resetAt: now + windowMs };
+  if (entry.resetAt <= now) {
+    entry.count = 0;
+    entry.resetAt = now + windowMs;
+  }
+  entry.count++;
+  loginAttempts.set(key, entry);
+  return entry.count > maxAttempts;
+}
+
 function safeEqual(a, b) {
   const left = Buffer.from(String(a));
   const right = Buffer.from(String(b));
@@ -84,6 +108,18 @@ function signSession(payload, secret) {
   const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
   const sig = crypto.createHmac("sha256", secret).update(body).digest("base64url");
   return `${body}.${sig}`;
+}
+
+function buildManagementCookie(name, value, options = {}) {
+  const parts = [
+    `${name}=${encodeURIComponent(value)}`,
+    "HttpOnly",
+    "SameSite=Lax",
+    "Path=/",
+  ];
+  if (Number.isFinite(options.maxAge)) parts.push(`Max-Age=${Math.ceil(options.maxAge)}`);
+  if (options.secure) parts.push("Secure");
+  return parts.join("; ");
 }
 
 function verifySession(token, secret) {
@@ -232,6 +268,20 @@ async function generateWithPool(pool, config, params) {
 export function createServer(config, pool) {
   const app = express();
 
+  app.use((req, res, next) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("Referrer-Policy", "no-referrer");
+    res.setHeader(
+      "Content-Security-Policy",
+      "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+    );
+    if (req.path.startsWith("/management") || req.path.startsWith("/admin")) {
+      res.setHeader("Cache-Control", "no-store");
+    }
+    next();
+  });
+
   app.use(express.json({ limit: "50mb" }));
 
   app.use((req, res, next) => {
@@ -264,6 +314,33 @@ export function createServer(config, pool) {
     next();
   };
 
+  const authenticateAdmin = (req, res, next) => {
+    if (!config.adminApiKey) {
+      return res.status(503).json({
+        error: {
+          message: "Admin API is disabled. Set ADMIN_API_KEY to enable /admin endpoints.",
+          type: "admin_disabled",
+        },
+      });
+    }
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({
+        error: {
+          message: "Missing Authorization header. Use: Authorization: Bearer <admin-api-key>",
+          type: "auth_error",
+        },
+      });
+    }
+    const token = authHeader.slice(7).trim();
+    if (!safeEqual(token, config.adminApiKey)) {
+      return res.status(403).json({
+        error: { message: "Invalid admin API key", type: "auth_error" },
+      });
+    }
+    next();
+  };
+
   const requireManagement = (req, res, next) => {
     if (!config.managementPassword) {
       return res.status(503).json({
@@ -278,6 +355,14 @@ export function createServer(config, pool) {
       return res.status(401).json({
         error: { message: "Management login required", type: "auth_error" },
       });
+    }
+    if (!["GET", "HEAD", "OPTIONS"].includes(req.method)) {
+      const csrf = req.headers["x-codex-imagegen-csrf"];
+      if (csrf !== "1") {
+        return res.status(403).json({
+          error: { message: "Missing management CSRF header", type: "auth_error" },
+        });
+      }
     }
     next();
   };
@@ -317,7 +402,7 @@ export function createServer(config, pool) {
       server: {
         port: config.port,
         default_model: config.defaultModel,
-        version: "0.4.0.0",
+        version: "0.4.1.0",
       },
     });
   });
@@ -350,6 +435,12 @@ export function createServer(config, pool) {
       });
     }
 
+    if (isLoginRateLimited(req)) {
+      return res.status(429).json({
+        error: { message: "Too many login attempts. Try again later.", type: "rate_limited" },
+      });
+    }
+
     const password = typeof req.body?.password === "string" ? req.body.password : "";
     if (!safeEqual(password, config.managementPassword)) {
       return res.status(401).json({
@@ -363,7 +454,10 @@ export function createServer(config, pool) {
     const token = signSession({ exp: Date.now() + ttl }, config.managementSessionSecret);
     res.setHeader(
       "Set-Cookie",
-      `mgmt_session=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${Math.ceil(ttl / 1000)}`,
+      buildManagementCookie("mgmt_session", token, {
+        maxAge: ttl / 1000,
+        secure: config.managementCookieSecure,
+      }),
     );
     res.json({ ok: true });
   });
@@ -371,7 +465,10 @@ export function createServer(config, pool) {
   app.post("/management/api/logout", (_req, res) => {
     res.setHeader(
       "Set-Cookie",
-      "mgmt_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0",
+      buildManagementCookie("mgmt_session", "", {
+        maxAge: 0,
+        secure: config.managementCookieSecure,
+      }),
     );
     res.json({ ok: true });
   });
@@ -631,12 +728,12 @@ export function createServer(config, pool) {
   // ─── Admin endpoints (same API key as generation) ─────────────────────────
 
   /** GET /admin/accounts — list pool contents with per-account status. */
-  app.get("/admin/accounts", authenticate, (_req, res) => {
+  app.get("/admin/accounts", authenticateAdmin, (_req, res) => {
     res.json({ stats: pool.stats(), accounts: pool.list() });
   });
 
   /** POST /admin/harvest — manually re-scan the Codex CLI auth file. */
-  app.post("/admin/harvest", authenticate, async (_req, res) => {
+  app.post("/admin/harvest", authenticateAdmin, async (_req, res) => {
     try {
       const result = await pool.harvestFromCodex();
       res.json({ ok: true, result, stats: pool.stats() });
@@ -648,7 +745,7 @@ export function createServer(config, pool) {
   });
 
   /** POST /admin/accounts/:id/revive — reset a dead/cooldown account to healthy. */
-  app.post("/admin/accounts/:id/revive", authenticate, (req, res) => {
+  app.post("/admin/accounts/:id/revive", authenticateAdmin, (req, res) => {
     const ok = pool.revive(req.params.id);
     if (!ok) {
       return res.status(404).json({
@@ -659,7 +756,7 @@ export function createServer(config, pool) {
   });
 
   /** DELETE /admin/accounts/:id — remove an account from the pool. */
-  app.delete("/admin/accounts/:id", authenticate, async (req, res) => {
+  app.delete("/admin/accounts/:id", authenticateAdmin, async (req, res) => {
     const ok = await pool.remove(req.params.id);
     if (!ok) {
       return res.status(404).json({

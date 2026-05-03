@@ -1,130 +1,253 @@
 # Codex ImageGen
 
-Proxy API server chạy local, cho phép các app bên ngoài gọi tạo ảnh AI thông qua OAuth credentials của Codex CLI.
+Codex ImageGen is a small OpenAI-compatible local/remote image proxy. It exposes `/v1/images/generations` and `/v1/images/edits`, uses Codex/ChatGPT OAuth credentials behind the scenes, rotates multiple accounts through an auth pool, and includes a password-gated browser management UI.
 
-**API shape: OpenAI-compatible** — tương thích với các client gọi `/v1/images/generations` và `/v1/images/edits` theo convention của OpenAI SDK. App chỉ cần đổi `base_url` và `api_key` là chạy được, zero thay đổi code.
+The intended deployment is Docker or Portainer with a persistent `/data` mount for OAuth credentials. Do not bake OAuth tokens into the image.
 
-## Kiến trúc
+## Current Image
 
-```
-App (NailArt, Web, v.v.)
-  │
-  │  POST /v1/images/generations  |  POST /v1/images/edits
-  │  Authorization: Bearer <proxy-api-key>
-  ▼
-Codex ImageGen Proxy (localhost:3456)
-  │
-  │  AuthPool (LRU rotation, cooldown/dead tracking)
-  │   ├── ~/.codex-imagegen/accounts/acc_A.json
-  │   ├── ~/.codex-imagegen/accounts/acc_B.json
-  │   └── ...
-  │
-  │  Auto-harvest: watch ~/.codex/auth.json → copy new logins into pool
-  ▼
-ChatGPT/Codex Responses API (chatgpt.com)
-  │
-  ▼
-Image base64 → trả về cho App
+```text
+ghcr.io/ngojclee/codex-imagegen:latest
 ```
 
-## Yêu cầu
+If the GHCR package is private, configure registry auth in Portainer or run `docker login ghcr.io` with a GitHub PAT that has `read:packages`.
 
-- Node.js 22+
-- Codex CLI đã login ở chế độ **chatgpt** (OAuth):
-  ```bash
-  codex auth login
-  # Chọn chatgpt mode
-  ```
-  Login một account là đủ để chạy. Login nhiều account (có thể lặp lại `codex auth login` với các email khác) → proxy tự thu vào pool và xoay vòng.
+## Public Security Notes
 
-## Cài đặt
+Before exposing this service outside a trusted network:
+
+- Set strong unique values for `PROXY_API_KEY`, `MANAGEMENT_PASSWORD`, and `MANAGEMENT_SESSION_SECRET`.
+- Keep `ADMIN_API_KEY` empty unless you specifically need `/admin/*` API automation.
+- Do not reuse `PROXY_API_KEY` as `ADMIN_API_KEY`.
+- Put `/management` behind VPN, Tailscale, Cloudflare Access, or a reverse proxy with HTTPS.
+- Treat everything under `/data` as sensitive because it stores OAuth refresh tokens.
+- Never commit `.env`, `.env.docker`, `auth.json`, `/data`, `output`, `.runtime`, `.omc`, or `.omx`.
+- OAuth callback URLs contain one-time `code` values. Paste them only into your own management UI.
+
+Security hardening included in the app:
+
+- Management UI uses an HttpOnly signed cookie.
+- Management mutation endpoints require an internal CSRF header.
+- `/admin/*` is disabled unless `ADMIN_API_KEY` is set.
+- Docker image runs as the non-root `node` user.
+- Compose/Portainer examples use `read_only`, `tmpfs: /tmp`, and `no-new-privileges`.
+- `npm audit` currently reports 0 vulnerabilities.
+
+## URLs
+
+Assuming your Docker host is `192.0.2.101` and port `3456`:
+
+| Purpose | URL |
+|---|---|
+| Management UI | `http://192.0.2.101:3456/management` |
+| Health check | `http://192.0.2.101:3456/health` |
+| Text-to-image | `http://192.0.2.101:3456/v1/images/generations` |
+| Image edits | `http://192.0.2.101:3456/v1/images/edits` |
+
+The root `/` is not the GUI. Use `/management`.
+
+## Portainer Deployment
+
+Use [deploy/portainer-stack.yml](deploy/portainer-stack.yml) and [deploy/portainer.env.example](deploy/portainer.env.example).
+
+1. On the Docker host, create the persistent data directory:
+
+   ```bash
+   mkdir -p /home/Docker/CLIProxyAPI/codex-imagegen/data
+   chown -R 1000:1000 /home/Docker/CLIProxyAPI/codex-imagegen/data
+   chmod 700 /home/Docker/CLIProxyAPI/codex-imagegen/data
+   ```
+
+   The container runs as UID `1000` (`node`). If your NAS/host uses a different permission model, make sure the container can write to this directory.
+
+2. In Portainer, go to **Stacks** → **Add stack**.
+
+3. Paste the contents of `deploy/portainer-stack.yml` into the Web editor.
+
+4. Paste variables from `deploy/portainer.env.example` into **Environment variables**.
+
+5. Change at least these values:
+
+   ```env
+   PROXY_API_KEY=sk-proxy-use-a-long-random-value
+   MANAGEMENT_PASSWORD=use-a-strong-password
+   MANAGEMENT_SESSION_SECRET=use-a-long-random-secret
+   ```
+
+6. If GHCR pull fails with `unauthorized`, add a Portainer registry:
+
+   - Registry URL: `ghcr.io`
+   - Username: your GitHub username
+   - Password: GitHub PAT with `read:packages`
+
+   Or make the GHCR package public.
+
+7. Deploy the stack.
+
+8. Open:
+
+   ```text
+   http://<docker-host>:3456/management
+   ```
+
+The Portainer stack uses this bind mount by default:
+
+```text
+/home/Docker/CLIProxyAPI/codex-imagegen/data:/data
+```
+
+Inside the container:
+
+| Container path | Purpose |
+|---|---|
+| `/data/auth.json` | Optional source auth file for Harvest |
+| `/data/pool/accounts` | Imported account auth files |
+| `/data/pool/events.log` | Pool events log |
+| `/data/output` | Runtime output directory |
+
+## Docker CLI Deployment
+
+Create `.env.docker` from `.env.docker.example` and edit the secrets:
 
 ```bash
-cd codex-imagegen
-npm install
+cp .env.docker.example .env.docker
 ```
 
-## Chạy
+Run the published image:
 
 ```bash
-npm start
+docker pull ghcr.io/ngojclee/codex-imagegen:latest
+
+docker run -d --name codex-imagegen \
+  -p 3456:3456 \
+  --env-file .env.docker \
+  --read-only \
+  --tmpfs /tmp \
+  --security-opt no-new-privileges:true \
+  -v /home/Docker/CLIProxyAPI/codex-imagegen/data:/data \
+  ghcr.io/ngojclee/codex-imagegen:latest
 ```
 
-Lần chạy đầu tiên sẽ tự sinh API key và lưu vào `.env`.
+Or build locally:
 
-## API Endpoints
-
-### `POST /v1/images/generations` — Text-to-image (JSON)
-
-Tạo ảnh từ prompt thuần text. Dùng cho avatar, background from scratch, creative gen.
-
-**Headers:**
-```
-Authorization: Bearer <proxy-api-key>
-Content-Type: application/json
+```bash
+docker compose up -d --build
 ```
 
-**Body:**
+## Management UI
+
+Enable the UI by setting `MANAGEMENT_PASSWORD`. Then open:
+
+```text
+http://<host>:3456/management
+```
+
+The management UI can:
+
+- show pool stats and account health
+- create a manual OAuth login link
+- import raw `auth.json`
+- harvest `/data/auth.json` or `CODEX_AUTH_PATH`
+- revive or delete pool accounts
+
+### Recommended Auth Flow: Manual OAuth Login
+
+This works well for Docker/Portainer because the browser login happens on your own computer.
+
+1. Open `/management` and sign in.
+2. Click **Create Login Link**.
+3. Open or copy the generated OpenAI OAuth URL.
+4. Login in your browser.
+5. Browser redirects to `OAUTH_REDIRECT_URI`, default:
+
+   ```text
+   http://localhost:1455/auth/callback
+   ```
+
+   It is fine if the page says it cannot connect. You only need the URL in the browser address bar.
+
+6. Copy the full callback URL, including `code=...&state=...`.
+7. Paste it into **Callback URL**.
+8. Click **Complete Login**.
+
+The server exchanges the code using PKCE, creates a Codex-compatible auth JSON, and imports it into `/data/pool/accounts`.
+
+### Alternative: Import Raw Auth JSON
+
+If you already have a Codex OAuth file, paste or upload it in the **Import Auth** panel.
+
+Expected Codex format:
+
 ```json
 {
-  "prompt": "a cinematic fantasy city at sunrise",
-  "model": "gpt-5.4",
-  "input_refs": ["data:image/png;base64,..."],
-  "timeout_ms": 900000,
-  "size": "1024x1024",
-  "quality": "medium",
-  "background": "opaque",
-  "n": 1
+  "auth_mode": "chatgpt",
+  "tokens": {
+    "access_token": "...",
+    "refresh_token": "...",
+    "id_token": "...",
+    "account_id": "..."
+  }
 }
 ```
 
-| Field | Kiểu | Bắt buộc | Mô tả |
-|-------|------|----------|-------|
-| `prompt` | string | ✅ | Prompt mô tả ảnh cần tạo |
-| `model` | string | ❌ | Model (default: `gpt-5.4`) |
-| `input_refs` | string[] | ❌ | Ảnh tham chiếu (base64 data URL hoặc HTTP URL) |
-| `timeout_ms` | number | ❌ | Timeout (default: 900000ms = 15 phút) |
-| `size` | string | ❌ | **Accepted-and-ignored** (OpenAI-compat) |
-| `quality` | string | ❌ | **Accepted-and-ignored** (OpenAI-compat) |
-| `background` | string | ❌ | **Accepted-and-ignored** (OpenAI-compat) |
-| `n` | number | ❌ | **Accepted-and-ignored** — proxy luôn trả 1 ảnh |
+### Alternative: Harvest Mounted Auth
 
-### `POST /v1/images/edits` — Image-to-image (multipart)
+Copy an auth file to the data directory as:
 
-Tạo ảnh dựa trên ảnh reference. Dùng cho batch/touch up/realism/background swap/style transfer.
-
-**Headers:**
-```
-Authorization: Bearer <proxy-api-key>
-Content-Type: multipart/form-data
+```text
+/home/Docker/CLIProxyAPI/codex-imagegen/data/auth.json
 ```
 
-**Form parts:**
+Then click **Harvest** in the management UI.
 
-| Part | Kiểu | Bắt buộc | Mô tả |
-|------|------|----------|-------|
-| `image[]` | file (lặp 1–3 lần) | ✅ | PNG/JPEG binary, ≤ 10 MB/file |
-| `prompt` | text | ✅ | Prompt chỉ đạo tạo ảnh |
-| `model` | text | ❌ | Model (default: `gpt-5.4`) |
-| `mask` | file | ❌ | Log nhưng hiện chưa dùng |
-| `size` | text | ❌ | Accepted-and-ignored |
-| `quality` | text | ❌ | Accepted-and-ignored |
-| `background` | text | ❌ | Accepted-and-ignored |
-| `n` | text | ❌ | Accepted-and-ignored |
+## API Usage
 
-**Curl ví dụ:**
+All image endpoints require:
+
+```http
+Authorization: Bearer <PROXY_API_KEY>
+```
+
+### Text-to-image
+
+```bash
+curl -X POST http://localhost:3456/v1/images/generations \
+  -H "Authorization: Bearer sk-proxy-use-a-long-random-value" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt":"a cinematic fantasy city at sunrise"}'
+```
+
+Request body fields:
+
+| Field | Type | Required | Notes |
+|---|---|---:|---|
+| `prompt` | string | yes | Text prompt |
+| `model` | string | no | Defaults to `DEFAULT_MODEL` |
+| `input_refs` | string[] | no | Data URLs or HTTP image URLs |
+| `timeout_ms` | number | no | Defaults to `DEFAULT_TIMEOUT_MS` |
+| `size` | string | no | Forwarded to image tool |
+| `quality` | string | no | Forwarded to image tool |
+| `background` | string | no | Forwarded to image tool |
+| `n` | number | no | Accepted for compatibility, ignored; returns one image |
+
+### Image edits
+
 ```bash
 curl -X POST http://localhost:3456/v1/images/edits \
-  -H "Authorization: Bearer sk-proxy-xxxx" \
-  -F "model=gpt-image-1" \
-  -F "prompt=Transfer the nail art pattern onto the target nails" \
-  -F "size=1024x1024" \
-  -F "n=1" \
+  -H "Authorization: Bearer sk-proxy-use-a-long-random-value" \
+  -F "prompt=Transfer this nail-art pattern onto the target nails" \
   -F "image[]=@source_artwork.png;type=image/png" \
   -F "image[]=@target_nails.png;type=image/png"
 ```
 
-### Response (cho cả 2 endpoint)
+Upload limits:
+
+- max 10 MB per file
+- max 5 multipart files total
+- `image[]` or `image` accepted
+- `mask` accepted but currently ignored
+
+### Response Shape
 
 ```json
 {
@@ -133,7 +256,7 @@ curl -X POST http://localhost:3456/v1/images/edits \
   "data": [
     {
       "b64_json": "iVBORw0KGgo...",
-      "revised_prompt": "A cinematic wide-angle..."
+      "revised_prompt": "..."
     }
   ],
   "usage": {
@@ -142,247 +265,122 @@ curl -X POST http://localhost:3456/v1/images/edits \
 }
 ```
 
-`b64_json` là chuỗi base64 thuần, **không có prefix** `data:image/png;base64,`.
+`b64_json` is raw base64 without a `data:image/png;base64,` prefix.
 
-### Error shape (cho tất cả endpoint)
+## Optional Admin API
 
-```json
-{
-  "error": {
-    "message": "Your prompt triggered a safety filter.",
-    "type": "invalid_request_error"
-  }
-}
+The browser management UI is preferred. The JSON admin API is disabled unless `ADMIN_API_KEY` is set.
+
+When enabled, use:
+
+```http
+Authorization: Bearer <ADMIN_API_KEY>
 ```
 
-### `GET /health`
+Endpoints:
 
-Kiểm tra trạng thái server và pool.
-
-**Response:**
-```json
-{
-  "status": "ok",
-  "pool": {
-    "total": 3,
-    "healthy": 2,
-    "cooldown": 1,
-    "dead": 0
-  },
-  "server": {
-    "port": 3456,
-    "default_model": "gpt-5.4",
-    "version": "0.4.0.0"
-  }
-}
-```
-
-`status` giá trị:
-- `ok` — có ít nhất 1 account healthy
-- `degraded` — có account nhưng tất cả đang cooldown/dead
-- `no_accounts` — pool rỗng, cần `codex auth login`
-
-## Multi-auth pool
-
-Proxy quản lý một **pool OAuth accounts** và tự động xoay vòng (LRU) giữa các account đang healthy. Cơ chế:
-
-1. **Auto-harvest**: proxy `fs.watch` file `~/.codex/auth.json`. Mỗi khi bạn chạy `codex auth login` với account mới, proxy tự copy sang `~/.codex-imagegen/accounts/<account_id>.json`. (Có poller 30s làm safety-net cho Windows.)
-2. **Rotation**: mỗi request gen ảnh bốc account ít được dùng nhất trong pool healthy.
-3. **State machine**:
-   - `healthy` → dùng bình thường
-   - `cooldown` (60s mặc định) → vừa gặp HTTP 429 hoặc 403, skip tạm thời
-   - `dead` → refresh_token bị revoke, skip vĩnh viễn cho đến khi user can thiệp (re-login hoặc gọi `/admin/accounts/:id/revive`)
-4. **Khi toàn pool down**: endpoint gen trả `503` với `{"error":{"type":"pool_unavailable","message":"..."}}`.
-5. **Event log**: tất cả rotation/cooldown/dead/harvest được append JSONL vào `~/.codex-imagegen/events.log` để debug sau.
-
-### Thêm account
-
-Chỉ cần login lần nữa bằng Codex CLI với account khác:
-
-```bash
-codex auth login   # login với account A
-# proxy auto-harvest → pool có acc_A
-codex auth login   # login với account B
-# proxy auto-harvest → pool có acc_A + acc_B
-```
-
-Kiểm tra pool:
-```bash
-curl -H "Authorization: Bearer $PROXY_API_KEY" \
-  http://localhost:3456/admin/accounts
-```
-
-### Admin endpoints
-
-Tất cả dùng cùng `PROXY_API_KEY` như endpoint gen ảnh.
-
-| Endpoint | Mô tả |
+| Endpoint | Purpose |
 |---|---|
-| `GET /admin/accounts` | List pool + status chi tiết từng account |
-| `POST /admin/harvest` | Force re-scan `~/.codex/auth.json` (backup nếu watcher miss event) |
-| `POST /admin/accounts/:id/revive` | Reset dead/cooldown account về healthy để test lại |
-| `DELETE /admin/accounts/:id` | Xóa account khỏi pool (xóa cả file) |
+| `GET /admin/accounts` | List pool accounts |
+| `POST /admin/harvest` | Harvest `CODEX_AUTH_PATH` |
+| `POST /admin/accounts/:id/revive` | Mark account healthy |
+| `DELETE /admin/accounts/:id` | Remove account from pool |
 
-## Management UI
+## Environment Variables
 
-Bật giao diện quản trị bằng biến môi trường `MANAGEMENT_PASSWORD`, rồi mở:
+| Variable | Required | Default | Notes |
+|---|---:|---|---|
+| `PROXY_API_KEY` | yes for Docker | auto-generated locally | Client API key for image endpoints |
+| `ADMIN_API_KEY` | no | empty | Enables `/admin/*`; leave empty to disable |
+| `MANAGEMENT_PASSWORD` | yes for UI | empty | Enables `/management`; empty disables UI |
+| `MANAGEMENT_SESSION_SECRET` | yes for Docker | generated locally | HMAC secret for management cookie |
+| `MANAGEMENT_SESSION_TTL_MS` | no | `43200000` | 12 hours |
+| `MANAGEMENT_COOKIE_SECURE` | no | `false` | Set `true` when serving only through HTTPS |
+| `PORT` | no | `3456` | Host/container app port |
+| `CODEX_AUTH_PATH` | no | `~/.codex/auth.json` or `/data/auth.json` in Docker | Harvest source file |
+| `POOL_ROOT` | no | `~/.codex-imagegen` or `/data/pool` in Docker | Pool root |
+| `ACCOUNTS_DIR` | no | `<POOL_ROOT>/accounts` | Account auth files |
+| `EVENTS_LOG` | no | `<POOL_ROOT>/events.log` | JSONL event log |
+| `OUTPUT_DIR` | no | `./output` or `/data/output` in Docker | Runtime output |
+| `CODEX_BASE_URL` | no | `https://chatgpt.com/backend-api/codex` | Codex backend base URL |
+| `CODEX_REFRESH_URL` | no | `https://auth.openai.com/oauth/token` | OAuth token endpoint |
+| `DEFAULT_MODEL` | no | `gpt-5.4` | Default model |
+| `DEFAULT_TIMEOUT_MS` | no | `900000` | Request timeout |
+| `COOLDOWN_DEFAULT_MS` | no | `60000` | Account cooldown after 429/403 |
+| `OAUTH_REDIRECT_URI` | no | `http://localhost:1455/auth/callback` | Manual OAuth redirect URI |
+| `OAUTH_SESSION_TTL_MS` | no | `600000` | OAuth state lifetime |
+| `DATA_DIR` | Portainer only | `/home/Docker/CLIProxyAPI/codex-imagegen/data` | Host bind mount path |
+
+## Build Artifacts
+
+GitHub Actions runs on every push to `master`:
+
+- Node syntax checks
+- `docker compose config`
+- portable zip artifact: `codex-imagegen-portable.zip`
+- GHCR Docker image: `ghcr.io/ngojclee/codex-imagegen:latest`
+
+If GitHub warns about Node.js 20 actions deprecation, that is from upstream GitHub actions runtime and does not affect this app build today.
+
+## Troubleshooting
+
+### Portainer says `version must be a string`
+
+Use the current `deploy/portainer-stack.yml`; it starts with:
+
+```yaml
+version: "3.9"
+```
+
+### Pulling GHCR image returns `unauthorized`
+
+The package is private or your Docker host is not logged in.
+
+Fix options:
+
+- make the GHCR package public, or
+- configure Portainer registry `ghcr.io` with a GitHub PAT that has `read:packages`, or
+- run `docker login ghcr.io` on the Docker host.
+
+### `/management` says disabled
+
+Set `MANAGEMENT_PASSWORD` and restart/redeploy.
+
+### Login succeeds but actions fail with CSRF
+
+Use the built-in UI. If calling management API manually, include:
+
+```http
+x-codex-imagegen-csrf: 1
+```
+
+### Pool is empty
+
+Add an account using OAuth Login, Import Auth, or Harvest `/data/auth.json`.
+
+### Container cannot write to `/data`
+
+The image runs as UID `1000`. Fix host directory permissions, for example:
 
 ```bash
-http://localhost:3456/management
+chown -R 1000:1000 /home/Docker/CLIProxyAPI/codex-imagegen/data
+chmod 700 /home/Docker/CLIProxyAPI/codex-imagegen/data
 ```
 
-Trang này dùng password gate riêng, không dùng `PROXY_API_KEY`. Sau khi đăng nhập có thể:
-- xem pool/stats
-- tạo link OAuth login kiểu Codex CLI, rồi paste callback URL để import token
-- import raw `auth.json` bằng paste hoặc upload file
-- gọi harvest thủ công từ `CODEX_AUTH_PATH`
-- revive hoặc xóa account trong pool
+### OAuth callback page cannot connect
 
-Auth import chỉ cần file thô hợp lệ theo format Codex OAuth (`auth.json` có `tokens.access_token`, `tokens.refresh_token`, `tokens.account_id`). App sẽ lưu bản copy vào `ACCOUNTS_DIR` và tiếp tục tự refresh bằng `refresh_token` khi token gần hết hạn.
+That is expected when using the manual flow. Copy the full URL from the browser address bar and paste it into the management UI.
 
-OAuth login trong UI hoạt động theo kiểu manual callback:
-1. bấm **Create Login Link** để app tạo `state`, PKCE `code_challenge`, và authorize URL
-2. mở/copy link đó, login OpenAI trong browser trên máy của bạn
-3. browser redirect về `OAUTH_REDIRECT_URI` mặc định `http://localhost:1455/auth/callback`; nếu trang báo không kết nối được cũng không sao
-4. copy nguyên URL trên address bar dạng `http://localhost:1455/auth/callback?code=...&state=...`
-5. paste vào **Callback URL** rồi bấm **Complete Login**
-
-Server sẽ đổi `code` lấy OAuth tokens bằng `code_verifier`, tạo auth JSON tương thích Codex, rồi import vào pool. `OAUTH_REDIRECT_URI` phải trùng redirect URI được dùng trong login link.
-
-Không nên hardcode token vào image Docker. Dùng volume hoặc import qua UI để giữ auth ở runtime storage.
-
-## Docker
-
-Có thể chạy app bằng Docker để không cần chạy trực tiếp trên máy local.
+## Local Development
 
 ```bash
-copy .env.docker.example .env.docker
-# sửa PROXY_API_KEY, MANAGEMENT_PASSWORD, MANAGEMENT_SESSION_SECRET
-docker compose up -d --build
+npm install
+npm start
 ```
 
-Hoặc dùng image build sẵn từ GitHub Container Registry sau khi GitHub Action chạy xong:
+Local first run can auto-generate `.env` with `PROXY_API_KEY`. Docker deployments should set secrets explicitly.
 
-```bash
-docker pull ghcr.io/ngojclee/codex-imagegen:latest
-docker run -d --name codex-imagegen \
-  -p 3456:3456 \
-  --env-file .env.docker \
-  -v codex-imagegen-data:/data \
-  ghcr.io/ngojclee/codex-imagegen:latest
-```
-
-### Portainer stack
-
-Dùng stack mẫu tại `deploy/portainer-stack.yml`.
-
-1. Portainer → **Stacks** → **Add stack**
-2. Copy nội dung `deploy/portainer-stack.yml` vào Web editor
-3. Copy các biến trong `deploy/portainer.env.example` vào **Environment variables**
-4. Sửa ít nhất:
-   - `PROXY_API_KEY`
-   - `MANAGEMENT_PASSWORD`
-   - `MANAGEMENT_SESSION_SECRET`
-5. Deploy stack
-6. Mở `http://<docker-host>:3456/management`
-
-Stack dùng image `ghcr.io/ngojclee/codex-imagegen:latest` và bind mount `${DATA_DIR}` vào `/data` trong container. Mặc định:
-
-```text
-DATA_DIR=/home/Docker/CLIProxyAPI/codex-imagegen/data
-```
-
-Thư mục host này sẽ giữ auth pool, event log, và output runtime.
-
-Nếu Portainer báo `unauthorized` khi pull `ghcr.io/ngojclee/codex-imagegen:latest`, image/package GHCR đang private. Cách xử lý:
-- vào Portainer → **Registries** → add registry `ghcr.io`
-- username: GitHub username
-- password/token: GitHub PAT có scope `read:packages`
-- chọn registry đó cho stack, hoặc chạy `docker login ghcr.io` trên Docker host
-
-Nếu muốn pull không cần login, đặt package `codex-imagegen` trên GitHub Packages/GHCR sang public.
-
-Mỗi lần push lên `master`, GitHub Actions sẽ:
-- kiểm tra syntax Node
-- kiểm tra `docker compose config`
-- build Docker image và push lên `ghcr.io/ngojclee/codex-imagegen`
-- tạo artifact `codex-imagegen-portable.zip` trong tab Actions để tải về chạy local
-
-Mặc định container dùng volume `codex-imagegen-data` tại `/data`:
-- `/data/auth.json` cho harvest nếu bạn mount/copy auth source vào đây
-- `/data/pool/accounts` cho các account đã import
-- `/data/pool/events.log` cho event log
-- `/data/output` cho output runtime
-
-Import auth vào Docker có 3 cách:
-1. mở `/management`, nhập `MANAGEMENT_PASSWORD`, dùng OAuth Login rồi paste callback URL
-2. upload/paste `auth.json`
-3. copy file vào volume/container làm `/data/auth.json`, rồi bấm Harvest hoặc gọi `POST /management/api/harvest`
-
-Tự login OAuth hoàn toàn trong container thường không ổn vì `codex auth login` cần browser/device interaction và lưu credential theo môi trường user. Cách bền hơn là login một lần bằng Codex CLI ở máy có browser, lấy raw `~/.codex/auth.json`, import vào pool. Sau đó server tự refresh access token bằng `refresh_token` cho tới khi token bị revoke/expired.
-
-## Ví dụ sử dụng
-
-### curl
-
-```bash
-curl -X POST http://localhost:3456/v1/images/generations \
-  -H "Authorization: Bearer sk-proxy-xxxx" \
-  -H "Content-Type: application/json" \
-  -d '{"prompt": "a cinematic fantasy city at sunrise"}'
-```
-
-### Python
-
-```python
-import requests
-
-response = requests.post(
-    "http://localhost:3456/v1/images/generations",
-    headers={"Authorization": "Bearer sk-proxy-xxxx"},
-    json={"prompt": "a cinematic fantasy city at sunrise"}
-)
-
-data = response.json()
-for img in data["data"]:
-    # img["b64_json"] contains base64 PNG
-    pass
-```
-
-### JavaScript
-
-```javascript
-const response = await fetch("http://localhost:3456/v1/images/generations", {
-  method: "POST",
-  headers: {
-    "Authorization": "Bearer sk-proxy-xxxx",
-    "Content-Type": "application/json",
-  },
-  body: JSON.stringify({ prompt: "a cinematic fantasy city at sunrise" }),
-});
-
-const { data } = await response.json();
-// data[0].b64_json contains base64 PNG
-```
-
-## Cấu hình (.env)
-
-| Biến | Mặc định | Mô tả |
-|------|----------|-------|
-| `PROXY_API_KEY` | Auto-gen | API key cho client |
-| `PORT` | `3456` | Cổng server |
-| `CODEX_AUTH_PATH` | `~/.codex/auth.json` | File auth source (để harvest) |
-| `POOL_ROOT` | `~/.codex-imagegen` | Thư mục gốc cho pool |
-| `ACCOUNTS_DIR` | `<POOL_ROOT>/accounts` | Nơi lưu file auth mỗi account |
-| `EVENTS_LOG` | `<POOL_ROOT>/events.log` | Log JSONL cho pool events |
-| `COOLDOWN_DEFAULT_MS` | `60000` | TTL cooldown mặc định khi gặp 429/403 |
-| `DEFAULT_MODEL` | `gpt-5.4` | Model mặc định |
-| `DEFAULT_TIMEOUT_MS` | `900000` | Timeout request |
-| `MANAGEMENT_PASSWORD` | empty | Password bật `/management`; empty = disabled |
-| `MANAGEMENT_SESSION_SECRET` | `PROXY_API_KEY` | Secret ký cookie session |
-| `MANAGEMENT_SESSION_TTL_MS` | `43200000` | TTL session management |
-| `OAUTH_REDIRECT_URI` | `http://localhost:1455/auth/callback` | Redirect URI dùng trong manual OAuth login |
-| `OAUTH_SESSION_TTL_MS` | `600000` | TTL state/code_verifier chờ callback paste |
+In Docker/production (`NODE_ENV=production`), `PROXY_API_KEY` is required. If `MANAGEMENT_PASSWORD` is set, `MANAGEMENT_SESSION_SECRET` is also required.
 
 ## License
 

@@ -51,7 +51,8 @@ jobs:
           New-Item -ItemType Directory -Force $dist | Out-Null
           Copy-Item src $dist/src -Recurse
           Copy-Item public $dist/public -Recurse
-          Copy-Item package.json,package-lock.json,README.md,.env.example,.env.docker.example,Dockerfile,docker-compose.yml,run_app.bat,icon.ico,icon.png $dist
+          Copy-Item package.json,package-lock.json,README.md,.env.example,.env.docker.example,Dockerfile,docker-compose.yml,run_app.bat,create_shortcut.ps1,icon.ico,icon.png $dist
+          Copy-Item deploy $dist/deploy -Recurse
           Compress-Archive -Path $dist -DestinationPath dist/codex-imagegen-portable.zip -Force
 
       - name: Upload portable artifact
