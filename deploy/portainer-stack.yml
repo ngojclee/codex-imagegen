@@ -24,8 +24,4 @@ services:
       DEFAULT_TIMEOUT_MS: "${DEFAULT_TIMEOUT_MS:-900000}"
       COOLDOWN_DEFAULT_MS: "${COOLDOWN_DEFAULT_MS:-60000}"
     volumes:
-      - codex-imagegen-data:/data
-
-volumes:
-  codex-imagegen-data:
-    name: codex-imagegen-data
+      - "${DATA_DIR:-/home/Docker/CLIProxyAPI/codex-imagegen/data}:/data"

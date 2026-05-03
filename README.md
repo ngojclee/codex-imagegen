@@ -286,7 +286,13 @@ Dùng stack mẫu tại `deploy/portainer-stack.yml`.
 5. Deploy stack
 6. Mở `http://<docker-host>:3456/management`
 
-Stack dùng image `ghcr.io/ngojclee/codex-imagegen:latest` và volume named `codex-imagegen-data` để giữ auth pool tại `/data`.
+Stack dùng image `ghcr.io/ngojclee/codex-imagegen:latest` và bind mount `${DATA_DIR}` vào `/data` trong container. Mặc định:
+
+```text
+DATA_DIR=/home/Docker/CLIProxyAPI/codex-imagegen/data
+```
+
+Thư mục host này sẽ giữ auth pool, event log, và output runtime.
 
 Mỗi lần push lên `master`, GitHub Actions sẽ:
 - kiểm tra syntax Node
