@@ -53,9 +53,9 @@ Use [deploy/portainer-stack.yml](deploy/portainer-stack.yml) and [deploy/portain
 1. On the Docker host, create the persistent data directory:
 
    ```bash
-   mkdir -p /home/Docker/CLIProxyAPI/codex-imagegen/data
-   chown -R 1000:1000 /home/Docker/CLIProxyAPI/codex-imagegen/data
-   chmod 700 /home/Docker/CLIProxyAPI/codex-imagegen/data
+   mkdir -p /home/Docker/codex-imagegen/data
+   chown -R 1000:1000 /home/Docker/codex-imagegen/data
+   chmod 700 /home/Docker/codex-imagegen/data
    ```
 
    The container runs as UID `1000` (`node`). If your NAS/host uses a different permission model, make sure the container can write to this directory.
@@ -93,7 +93,7 @@ Use [deploy/portainer-stack.yml](deploy/portainer-stack.yml) and [deploy/portain
 The Portainer stack uses this bind mount by default:
 
 ```text
-/home/Docker/CLIProxyAPI/codex-imagegen/data:/data
+/home/Docker/codex-imagegen/data:/data
 ```
 
 Inside the container:
@@ -124,7 +124,7 @@ docker run -d --name codex-imagegen \
   --read-only \
   --tmpfs /tmp \
   --security-opt no-new-privileges:true \
-  -v /home/Docker/CLIProxyAPI/codex-imagegen/data:/data \
+  -v /home/Docker/codex-imagegen/data:/data \
   ghcr.io/ngojclee/codex-imagegen:latest
 ```
 
@@ -195,7 +195,7 @@ Expected Codex format:
 Copy an auth file to the data directory as:
 
 ```text
-/home/Docker/CLIProxyAPI/codex-imagegen/data/auth.json
+/home/Docker/codex-imagegen/data/auth.json
 ```
 
 Then click **Harvest** in the management UI.
@@ -309,7 +309,7 @@ Endpoints:
 | `COOLDOWN_DEFAULT_MS` | no | `60000` | Account cooldown after 429/403 |
 | `OAUTH_REDIRECT_URI` | no | `http://localhost:1455/auth/callback` | Manual OAuth redirect URI |
 | `OAUTH_SESSION_TTL_MS` | no | `600000` | OAuth state lifetime |
-| `DATA_DIR` | Portainer only | `/home/Docker/CLIProxyAPI/codex-imagegen/data` | Host bind mount path |
+| `DATA_DIR` | Portainer only | `/home/Docker/codex-imagegen/data` | Host bind mount path |
 
 ## Build Artifacts
 
@@ -363,8 +363,8 @@ Add an account using OAuth Login, Import Auth, or Harvest `/data/auth.json`.
 The image runs as UID `1000`. Fix host directory permissions, for example:
 
 ```bash
-chown -R 1000:1000 /home/Docker/CLIProxyAPI/codex-imagegen/data
-chmod 700 /home/Docker/CLIProxyAPI/codex-imagegen/data
+chown -R 1000:1000 /home/Docker/codex-imagegen/data
+chmod 700 /home/Docker/codex-imagegen/data
 ```
 
 ### OAuth callback page cannot connect
