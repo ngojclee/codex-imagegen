@@ -402,7 +402,7 @@ export function createServer(config, pool) {
       server: {
         port: config.port,
         default_model: config.defaultModel,
-        version: "0.4.1.1",
+        version: "0.4.1.2",
       },
     });
   });

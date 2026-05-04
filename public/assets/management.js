@@ -12,6 +12,8 @@ const oauthMessage = document.querySelector("#oauthMessage");
 const oauthUrl = document.querySelector("#oauthUrl");
 const callbackUrl = document.querySelector("#callbackUrl");
 const accountsEl = document.querySelector("#accounts");
+const tabButtons = document.querySelectorAll("[data-auth-tab]");
+const tabPanels = document.querySelectorAll("[data-auth-panel]");
 
 const stats = {
   total: document.querySelector("#statTotal"),
@@ -29,6 +31,16 @@ function show(view) {
 function setMessage(el, text, type = "") {
   el.textContent = text;
   el.className = `message ${type}`.trim();
+}
+
+function setAuthTab(tab) {
+  tabButtons.forEach((button) => {
+    const selected = button.dataset.authTab === tab;
+    button.setAttribute("aria-selected", selected ? "true" : "false");
+  });
+  tabPanels.forEach((panel) => {
+    panel.hidden = panel.dataset.authPanel !== tab;
+  });
 }
 
 async function request(url, options = {}) {
@@ -58,18 +70,20 @@ async function loadAccounts() {
 
 function renderAccounts(accounts) {
   if (!accounts.length) {
-    accountsEl.innerHTML = '<p class="muted">No imported accounts yet.</p>';
+    accountsEl.innerHTML = '<div class="empty-state">No imported accounts yet.</div>';
     return;
   }
 
   accountsEl.replaceChildren(...accounts.map((account) => {
+    const status = normalizeStatus(account.status);
     const row = document.createElement("div");
-    row.className = "account";
+    row.className = `account ${status}`;
     row.innerHTML = `
+      <div class="account-avatar" aria-hidden="true">${escapeHtml(accountInitial(account))}</div>
       <div>
         <div class="account-title">
           <strong>${escapeHtml(account.email || account.display_id)}</strong>
-          <span class="badge ${account.status}">${account.status}</span>
+          <span class="badge ${status}">${escapeHtml(account.status)}</span>
         </div>
         <div class="account-meta">
           ID: ${escapeHtml(account.display_id)}<br />
@@ -87,6 +101,15 @@ function renderAccounts(accounts) {
     row.querySelector('[data-action="delete"]').addEventListener("click", () => remove(account.id));
     return row;
   }));
+}
+
+function normalizeStatus(status) {
+  return ["healthy", "cooldown", "dead"].includes(status) ? status : "unknown";
+}
+
+function accountInitial(account) {
+  const value = account.email || account.display_id || "?";
+  return value.trim().charAt(0).toUpperCase() || "?";
 }
 
 function escapeHtml(value) {
@@ -124,6 +147,10 @@ loginForm.addEventListener("submit", async (event) => {
   } catch (err) {
     setMessage(loginMessage, err.message, "error");
   }
+});
+
+tabButtons.forEach((button) => {
+  button.addEventListener("click", () => setAuthTab(button.dataset.authTab));
 });
 
 importForm.addEventListener("submit", async (event) => {

@@ -4,15 +4,20 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Codex ImageGen Management</title>
+    <link rel="icon" href="/management/assets/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/management/assets/management.css" />
   </head>
   <body>
-    <main class="shell">
-      <section id="loginView" class="panel login-panel" hidden>
-        <div>
-          <p class="eyebrow">Codex ImageGen</p>
-          <h1>Management</h1>
-        </div>
+    <main class="app-shell">
+      <section id="loginView" class="auth-screen" hidden>
+        <div class="auth-card panel">
+          <div class="brand-lockup">
+            <span class="brand-mark" aria-hidden="true"></span>
+            <div>
+              <p class="eyebrow">Codex ImageGen</p>
+              <h1>Management</h1>
+            </div>
+          </div>
         <form id="loginForm" class="stack">
           <label>
             <span>Password</span>
@@ -21,84 +26,134 @@
           <button type="submit">Sign in</button>
         </form>
         <p id="loginMessage" class="message"></p>
+        </div>
       </section>
 
-      <section id="disabledView" class="panel login-panel" hidden>
-        <p class="eyebrow">Management disabled</p>
-        <h1>Set MANAGEMENT_PASSWORD</h1>
-        <p class="muted">Restart the server after setting the env var.</p>
+      <section id="disabledView" class="auth-screen" hidden>
+        <div class="auth-card panel">
+          <div class="brand-lockup">
+            <span class="brand-mark muted-mark" aria-hidden="true"></span>
+            <div>
+              <p class="eyebrow">Management disabled</p>
+              <h1>Set MANAGEMENT_PASSWORD</h1>
+            </div>
+          </div>
+          <p class="muted">Restart the server after setting the env var.</p>
+        </div>
       </section>
 
-      <section id="appView" hidden>
-        <header class="topbar">
-          <div>
-            <p class="eyebrow">Codex ImageGen</p>
-            <h1>Auth Pool</h1>
+      <section id="appView" class="dashboard" hidden>
+        <aside class="sidebar" aria-label="Management navigation">
+          <div class="brand-lockup">
+            <span class="brand-mark" aria-hidden="true"></span>
+            <div>
+              <strong>Codex ImageGen</strong>
+              <span>Credential pool</span>
+            </div>
           </div>
-          <div class="actions">
-            <button id="harvestBtn" type="button">Harvest</button>
-            <button id="refreshBtn" type="button">Refresh</button>
-            <button id="logoutBtn" type="button" class="secondary">Logout</button>
+          <nav class="nav-stack">
+            <a class="nav-item active" href="/management" aria-current="page">
+              <span class="nav-glyph" aria-hidden="true"></span>
+              Auth Pool
+            </a>
+          </nav>
+          <div class="sidebar-foot">
+            <span class="status-dot" aria-hidden="true"></span>
+            <span>Management session</span>
           </div>
-        </header>
+        </aside>
 
-        <section class="stats-grid" aria-label="Pool stats">
-          <article><span>Total</span><strong id="statTotal">0</strong></article>
-          <article><span>Healthy</span><strong id="statHealthy">0</strong></article>
-          <article><span>Cooldown</span><strong id="statCooldown">0</strong></article>
-          <article><span>Dead</span><strong id="statDead">0</strong></article>
-        </section>
+        <div class="workspace">
+          <header class="topbar">
+            <div>
+              <p class="eyebrow">Codex ImageGen</p>
+              <h1>Auth Pool</h1>
+            </div>
+            <div class="actions">
+              <button id="harvestBtn" type="button" class="warning">Harvest</button>
+              <button id="refreshBtn" type="button">Refresh</button>
+              <button id="logoutBtn" type="button" class="secondary">Logout</button>
+            </div>
+          </header>
 
-        <section class="grid">
-          <div class="left-column">
-          <article class="panel">
-            <h2>OAuth Login</h2>
-            <div class="stack">
-              <button id="oauthStartBtn" type="button">Create Login Link</button>
-              <label>
-                <span>Login URL</span>
-                <textarea id="oauthUrl" readonly spellcheck="false"></textarea>
-              </label>
-              <div class="actions wrap-actions">
-                <button id="copyOauthBtn" type="button" class="secondary">Copy</button>
-                <button id="openOauthBtn" type="button" class="secondary">Open</button>
+          <section class="stats-grid" aria-label="Pool stats">
+            <article class="stat-card total">
+              <span class="stat-icon" aria-hidden="true"></span>
+              <span>Total</span>
+              <strong id="statTotal">0</strong>
+            </article>
+            <article class="stat-card healthy">
+              <span class="stat-icon" aria-hidden="true"></span>
+              <span>Healthy</span>
+              <strong id="statHealthy">0</strong>
+            </article>
+            <article class="stat-card cooldown">
+              <span class="stat-icon" aria-hidden="true"></span>
+              <span>Cooldown</span>
+              <strong id="statCooldown">0</strong>
+            </article>
+            <article class="stat-card dead">
+              <span class="stat-icon" aria-hidden="true"></span>
+              <span>Dead</span>
+              <strong id="statDead">0</strong>
+            </article>
+          </section>
+
+          <section class="content-grid">
+            <article class="panel onboarding-panel">
+              <div class="section-head">
+                <h2>Account Onboarding</h2>
               </div>
-              <form id="oauthCompleteForm" class="stack">
-                <label>
-                  <span>Callback URL</span>
-                  <textarea id="callbackUrl" name="callback_url" spellcheck="false"></textarea>
-                </label>
-                <button type="submit">Complete Login</button>
-              </form>
-            </div>
-            <p id="oauthMessage" class="message"></p>
-          </article>
+              <div class="tabs" role="tablist" aria-label="Account onboarding methods">
+                <button id="oauthTab" type="button" role="tab" aria-controls="oauthPanel" aria-selected="true" data-auth-tab="oauth">OAuth</button>
+                <button id="importTab" type="button" role="tab" aria-controls="importPanel" aria-selected="false" data-auth-tab="import">Import</button>
+              </div>
+              <div id="oauthPanel" class="tab-panel" role="tabpanel" aria-labelledby="oauthTab" data-auth-panel="oauth">
+                <div class="stack">
+                  <button id="oauthStartBtn" type="button">Create Login Link</button>
+                  <label>
+                    <span>Login URL</span>
+                    <textarea id="oauthUrl" readonly spellcheck="false"></textarea>
+                  </label>
+                  <div class="actions wrap-actions">
+                    <button id="copyOauthBtn" type="button" class="secondary">Copy</button>
+                    <button id="openOauthBtn" type="button" class="secondary">Open</button>
+                  </div>
+                  <form id="oauthCompleteForm" class="stack">
+                    <label>
+                      <span>Callback URL</span>
+                      <textarea id="callbackUrl" name="callback_url" spellcheck="false"></textarea>
+                    </label>
+                    <button type="submit">Complete Login</button>
+                  </form>
+                </div>
+                <p id="oauthMessage" class="message"></p>
+              </div>
+              <div id="importPanel" class="tab-panel" role="tabpanel" aria-labelledby="importTab" data-auth-panel="import" hidden>
+                <form id="importForm" class="stack">
+                  <label>
+                    <span>auth.json</span>
+                    <input id="authFile" name="auth" type="file" accept=".json,application/json" />
+                  </label>
+                  <label>
+                    <span>Raw JSON</span>
+                    <textarea id="authJson" name="auth_json" spellcheck="false"></textarea>
+                  </label>
+                  <button type="submit">Import</button>
+                </form>
+                <p id="importMessage" class="message"></p>
+              </div>
+            </article>
 
-          <article class="panel">
-            <h2>Import Auth</h2>
-            <form id="importForm" class="stack">
-              <label>
-                <span>auth.json</span>
-                <input id="authFile" name="auth" type="file" accept=".json,application/json" />
-              </label>
-              <label>
-                <span>Raw JSON</span>
-                <textarea id="authJson" name="auth_json" spellcheck="false"></textarea>
-              </label>
-              <button type="submit">Import</button>
-            </form>
-            <p id="importMessage" class="message"></p>
-          </article>
-          </div>
-
-          <article class="panel accounts-panel">
-            <div class="section-head">
-              <h2>Accounts</h2>
-              <span id="lastUpdated" class="muted"></span>
-            </div>
-            <div id="accounts" class="accounts"></div>
-          </article>
-        </section>
+            <article class="panel accounts-panel">
+              <div class="section-head">
+                <h2>Accounts</h2>
+                <span id="lastUpdated" class="muted"></span>
+              </div>
+              <div id="accounts" class="accounts"></div>
+            </article>
+          </section>
+        </div>
       </section>
     </main>
 
