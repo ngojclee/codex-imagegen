@@ -1,13 +1,14 @@
 {
   "name": "codex-imagegen",
-  "version": "0.4.1.0",
+  "version": "0.4.1.1",
   "private": true,
   "type": "module",
   "description": "Proxy API server for AI image generation using Codex/ChatGPT OAuth credentials",
   "main": "src/index.mjs",
   "scripts": {
     "start": "node src/index.mjs",
-    "dev": "node --watch src/index.mjs"
+    "dev": "node --watch src/index.mjs",
+    "test": "node --test"
   },
   "dependencies": {
     "express": "^4.21.0",

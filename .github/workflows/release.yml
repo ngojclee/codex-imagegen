@@ -40,6 +40,10 @@ jobs:
           node --check src/pool.mjs
           node --check src/server.mjs
           node --check public/assets/management.js
+          node --check public/assets/management-request.js
+
+      - name: Test
+        run: npm test
 
       - name: Compose config check
         run: docker compose config

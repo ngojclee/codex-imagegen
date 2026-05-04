@@ -1,3 +1,5 @@
+import { buildManagementRequestInit } from "./management-request.js";
+
 const loginView = document.querySelector("#loginView");
 const disabledView = document.querySelector("#disabledView");
 const appView = document.querySelector("#appView");
@@ -30,16 +32,7 @@ function setMessage(el, text, type = "") {
 }
 
 async function request(url, options = {}) {
-  const method = (options.method || "GET").toUpperCase();
-  const res = await fetch(url, {
-    credentials: "same-origin",
-    headers: {
-      "accept": "application/json",
-      ...(method === "GET" ? {} : { "x-codex-imagegen-csrf": "1" }),
-      ...(options.headers || {}),
-    },
-    ...options,
-  });
+  const res = await fetch(url, buildManagementRequestInit(options));
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error?.message || `HTTP ${res.status}`);
   return data;
